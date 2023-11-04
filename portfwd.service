@@ -1,0 +1,12 @@
+[Unit]
+Description=SSH tunnel
+
+[Service]
+User=mai-portfwd
+Group=mai-portfwd
+Type=simple
+Restart=always
+RestartSec=10
+ExecStart=/usr/bin/ssh -F ~/.ssh/config -N portfwd
+
+# Note "~/.ssh" will be replaced.
