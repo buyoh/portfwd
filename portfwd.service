@@ -3,7 +3,7 @@ Description=SSH tunnel
 
 [Service]
 User=mai-portfwd
-Group=mai-portfwd
+Group=nogroup
 Type=simple
 Restart=always
 RestartSec=10

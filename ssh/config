@@ -1,0 +1,15 @@
+Host portfwd
+    HostName example.com
+    User username
+    Port 10022
+    IdentityFile ~/.ssh/id_rsa
+
+    RemoteForward 20022 localhost:22
+    ExitOnForwardFailure yes
+
+    # StrictHostKeyChecking no
+    # UserKnownHostsFile /dev/null
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.ssh/known_hosts
+
+# Note "~/.ssh" will be replaced.
