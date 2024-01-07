@@ -10,3 +10,6 @@ RestartSec=10
 ExecStart=/usr/bin/ssh -F ~/.ssh/config -N portfwd
 
 # Note "~/.ssh" will be replaced.
+
+[Install]
+WantedBy = multi-user.target
