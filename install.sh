@@ -21,17 +21,17 @@ if [[ ! -f .ssh/config ]]; then
   exit 1
 fi
 
-if ! id $ARG_USER > /dev/null; then
-  echo "User '$ARG_USER' does not exist. Create"
-  sudo useradd -u 2525 -g nogroup -M -d /nonexistent -s /usr/sbin/nologin mai-portfwd
-fi
-
 echo "Install to $ARG_APPDIR. Continue? (Y/n)"
 
 read l_confirm
 if [[ 'Y' != $l_confirm ]]; then
   echo 'abort'
   exit 1
+fi
+
+if ! id $ARG_USER > /dev/null; then
+  echo "User '$ARG_USER' does not exist. Create"
+  sudo useradd -u 2525 -g nogroup -M -d /nonexistent -s /usr/sbin/nologin mai-portfwd
 fi
 
 sudo mkdir -p $ARG_APPDIR
