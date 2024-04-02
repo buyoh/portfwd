@@ -6,7 +6,7 @@ require 'timeout'
 @logger = Logger.new(STDOUT)
 
 def check_pid_and_tcp_port_is_open(ip, port, pid)
-  @logger.debug("check_tcp_port_is_open ip=#{ip}, port=#{port}")
+  @logger.debug("check_pid_and_tcp_port_is_open ip=#{ip}, port=#{port}")
   begin
     Timeout::timeout(1) do
       begin
@@ -26,10 +26,10 @@ def check_pid_and_tcp_port_is_open(ip, port, pid)
   return false
 end
 
-def wait_tcp_port_is_open(ip, port, trycount=10)
+def wait_tcp_port_is_open(ip, port, pid, trycount=10)
   @logger.debug("wait_tcp_port_is_open ip=#{ip}, port=#{port}")
   trycount.times do |i|
-    if check_tcp_port_is_open(ip, port)
+    if check_pid_and_tcp_port_is_open(ip, port, pid)
       return true
     end
     sleep 1
@@ -37,10 +37,9 @@ def wait_tcp_port_is_open(ip, port, trycount=10)
   return false
 end
 
-def start_child_process_ssh(host)
+def start_child_process_ssh(host, ssh_config_filepath)
   @logger.debug("start_child_process_ssh host=#{host}")
-  config_filepath = '~/.ssh/config'  # TODO:
-  pid = spawn('ssh', '-N', '-F', config_filepath, host)
+  pid = spawn('ssh', '-N', '-F', ssh_config_filepath, host)
   return pid
 end
 
@@ -86,6 +85,7 @@ end
 
 # -------------------------------------
 
+# TODO: Use systemd targets?
 def vaidate_nodes
   stack = @nodes.select { |node| node.before_nodes.empty? }
   if stack.empty?
@@ -119,11 +119,11 @@ end
 
 # -------------------------------------
 
-def launch_node_blocking(info)
+def launch_node_blocking(info, ssh_config_filepath)
   host = info[:host]
-  pid = start_child_process_ssh(host)
+  pid = start_child_process_ssh(host, ssh_config_filepath)
 
-  if info[:check_tcps].any? {|check_tcp| !wait_tcp_port_is_open(check_tcp[:host], check_tcp[:port]) }
+  if info[:check_tcps].any? {|check_tcp| !wait_tcp_port_is_open(check_tcp[:host], check_tcp[:port], pid) }
     # failed
     Process.kill('KILL', pid)
     return nil
@@ -131,16 +131,15 @@ def launch_node_blocking(info)
   pid
 end
 
-def start_evaluate
+def start_evaluate(ssh_config_dir)
   sorted_nodes = vaidate_nodes
   return false unless sorted_nodes
 
-  return true
-  # TODO:
+  ssh_config_filepath = File.join(ssh_config_dir, 'config')
 
   pids = []
   sorted_nodes.each do |node|
-    pid = start_child_process_ssh(node.host)
+    pid = launch_node_blocking(node.info, ssh_config_filepath)
     unless pid
       @logger.error("Failed to launch node: #{node.host}")
       # kill all
@@ -162,13 +161,25 @@ def p_conn(info)
   node
 end
 
-config_path = ARGV[0]
+# TODO: need?
+# nochdir: true, noclose: true
+# Process.daemon(true, true)
 
-if config_path.nil?
-  puts 'Usage: ruby lib.rb config_path'
+ssh_config_dir = ARGV[0]
+
+if ssh_config_dir.nil?
+  puts 'Usage: ruby lib.rb ssh_config_dir'
   exit 2
 end
 
+config_path = File.join(ssh_config_dir, 'config.rb')
 load config_path
 
-p start_evaluate  # TODO:
+unless start_evaluate(ssh_config_dir)
+  @logger.error('Failed to start')
+  exit 1
+end
+
+@logger.info('Started')
+
+# Quit

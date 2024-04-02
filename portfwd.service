@@ -4,12 +4,12 @@ Description=SSH tunnel
 [Service]
 User=mai-portfwd
 Group=nogroup
-Type=simple
+Type=forking
 Restart=always
 RestartSec=10
-ExecStart=/usr/bin/ssh -F ~/.ssh/config -N portfwd
+ExecStart=/usr/bin/ruby ~/lib/lib.rb ~/.ssh
 
-# Note "~/.ssh" will be replaced.
+# Note "~/.ssh" and ~/lib will be replaced.
 
 [Install]
 WantedBy = multi-user.target

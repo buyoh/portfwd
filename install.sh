@@ -38,7 +38,9 @@ sudo mkdir -p $ARG_APPDIR
 
 sudo cp -ar .ssh $ARG_APPDIR
 sudo cp -a portfwd.service $ARG_APPDIR
+sudo cp -ar lib $ARG_APPDIR
 
+sudo sed -i "s|[~]/lib|$ARG_APPDIR/lib|g" $ARG_APPDIR/portfwd.service
 sudo sed -i "s|[~]/[.]ssh|$ARG_APPDIR/.ssh|g" $ARG_APPDIR/portfwd.service
 sudo sed -i "s|[~]/[.]ssh|$ARG_APPDIR/.ssh|g" $ARG_APPDIR/.ssh/config
 
