@@ -39,6 +39,12 @@ def start_child_process_ssh(host, ssh_config_filepath)
   spawn('ssh', '-N', '-F', ssh_config_filepath, host)
 end
 
+def kill_child_process(pid)
+  return unless Process.getpgid(pid) == Process.pid
+
+  Process.kill('KILL', pid)
+end
+
 # -------------------------------------
 
 @nodes = []
@@ -113,7 +119,7 @@ def launch_node_blocking(info, ssh_config_filepath)
 
   if info[:check_tcps].any? { |check_tcp| !wait_tcp_port_is_open(check_tcp[:host], check_tcp[:port], pid) }
     # failed
-    Process.kill('KILL', pid)
+    kill_child_process(pid)
     return nil
   end
   pid
@@ -133,7 +139,7 @@ def start_evaluate(ssh_config_dir)
     @logger.error("Failed to launch node: #{node.host}")
     # kill all
     pids.each do |pid|
-      Process.kill('KILL', pid)
+      kill_child_process(pid)
     end
     return false
   end
