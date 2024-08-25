@@ -1,5 +1,4 @@
 require 'logger'
-
 require 'socket'
 require 'timeout'
 
@@ -8,39 +7,36 @@ require 'timeout'
 def check_pid_and_tcp_port_is_open(ip, port, pid)
   @logger.debug("check_pid_and_tcp_port_is_open ip=#{ip}, port=#{port}")
   begin
-    Timeout::timeout(1) do
-      begin
-        if pid && Process.waitpid2(pid, Process::WNOHANG)
-          # process is dead
-          return false
-        end
-        s = TCPSocket.new(ip, port)
-        s.close
-        return true
-      rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH
+    Timeout.timeout(1) do
+      if pid && Process.waitpid2(pid, Process::WNOHANG)
+        # process is dead
         return false
       end
+
+      s = TCPSocket.new(ip, port)
+      s.close
+      return true
+    rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH
+      return false
     end
   rescue Timeout::Error
   end
-  return false
+  false
 end
 
-def wait_tcp_port_is_open(ip, port, pid, trycount=10)
+def wait_tcp_port_is_open(ip, port, pid, trycount = 10)
   @logger.debug("wait_tcp_port_is_open ip=#{ip}, port=#{port}")
-  trycount.times do |i|
-    if check_pid_and_tcp_port_is_open(ip, port, pid)
-      return true
-    end
+  trycount.times do |_i|
+    return true if check_pid_and_tcp_port_is_open(ip, port, pid)
+
     sleep 1
   end
-  return false
+  false
 end
 
 def start_child_process_ssh(host, ssh_config_filepath)
   @logger.debug("start_child_process_ssh host=#{host}")
-  pid = spawn('ssh', '-N', '-F', ssh_config_filepath, host)
-  return pid
+  spawn('ssh', '-N', '-F', ssh_config_filepath, host)
 end
 
 # -------------------------------------
@@ -54,23 +50,15 @@ class Node
     @before_nodes = []
     @after_nodes = []
   end
+
   def then(node)
     @after_nodes.push(node)
     node.before_nodes.push(self)
     node
   end
 
-  def before_nodes
-    @before_nodes
-  end
+  attr_reader :before_nodes, :after_nodes, :info
 
-  def after_nodes
-    @after_nodes
-  end
-
-  def info
-    @info
-  end
   def host
     @info[:host]
   end
@@ -99,7 +87,7 @@ def vaidate_nodes
   stack.each do |node|
     reached[node] = 0
   end
-  while !stack.empty?
+  until stack.empty?
     node = stack.pop
     sorted_nodes.push(node)
     node.after_nodes.each do |after_node|
@@ -108,7 +96,7 @@ def vaidate_nodes
       stack.push(after_node) if after_node.before_nodes.size == reached[after_node]
     end
   end
-  
+
   if sorted_nodes.size != @nodes.size
     @logger.error('Cycle detected')
     return nil
@@ -123,7 +111,7 @@ def launch_node_blocking(info, ssh_config_filepath)
   host = info[:host]
   pid = start_child_process_ssh(host, ssh_config_filepath)
 
-  if info[:check_tcps].any? {|check_tcp| !wait_tcp_port_is_open(check_tcp[:host], check_tcp[:port], pid) }
+  if info[:check_tcps].any? { |check_tcp| !wait_tcp_port_is_open(check_tcp[:host], check_tcp[:port], pid) }
     # failed
     Process.kill('KILL', pid)
     return nil
@@ -140,14 +128,14 @@ def start_evaluate(ssh_config_dir)
   pids = []
   sorted_nodes.each do |node|
     pid = launch_node_blocking(node.info, ssh_config_filepath)
-    unless pid
-      @logger.error("Failed to launch node: #{node.host}")
-      # kill all
-      pids.each do |pid|
-        Process.kill('KILL', pid)
-      end
-      return false
-    end 
+    next if pid
+
+    @logger.error("Failed to launch node: #{node.host}")
+    # kill all
+    pids.each do |pid|
+      Process.kill('KILL', pid)
+    end
+    return false
   end
 
   true
