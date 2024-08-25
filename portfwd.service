@@ -7,7 +7,7 @@ Group=nogroup
 Type=forking
 Restart=always
 RestartSec=10
-ExecStart=/usr/bin/ruby ~/lib/lib.rb ~/.ssh
+ExecStart=/usr/bin/ruby ~/lib/app.rb ~/.ssh
 
 # Note "~/.ssh" and ~/lib will be replaced.
 
