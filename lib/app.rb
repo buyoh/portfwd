@@ -2,48 +2,9 @@ require 'logger'
 require 'socket'
 require 'timeout'
 
+require_relative 'platform'
+
 @logger = Logger.new(STDOUT)
-
-def check_pid_and_tcp_port_is_open(ip, port, pid)
-  @logger.debug("check_pid_and_tcp_port_is_open ip=#{ip}, port=#{port}")
-  begin
-    Timeout.timeout(1) do
-      if pid && Process.waitpid2(pid, Process::WNOHANG)
-        # process is dead
-        return false
-      end
-
-      s = TCPSocket.new(ip, port)
-      s.close
-      return true
-    rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH
-      return false
-    end
-  rescue Timeout::Error
-  end
-  false
-end
-
-def wait_tcp_port_is_open(ip, port, pid, trycount = 10)
-  @logger.debug("wait_tcp_port_is_open ip=#{ip}, port=#{port}")
-  trycount.times do |_i|
-    return true if check_pid_and_tcp_port_is_open(ip, port, pid)
-
-    sleep 1
-  end
-  false
-end
-
-def start_child_process_ssh(host, ssh_config_filepath)
-  @logger.debug("start_child_process_ssh host=#{host}")
-  spawn('ssh', '-N', '-F', ssh_config_filepath, host)
-end
-
-def kill_child_process(pid)
-  return unless Process.getpgid(pid) == Process.pid
-
-  Process.kill('KILL', pid)
-end
 
 # -------------------------------------
 
@@ -113,19 +74,19 @@ end
 
 # -------------------------------------
 
-def launch_node_blocking(info, ssh_config_filepath)
+def launch_node_blocking(platform, info, ssh_config_filepath)
   host = info[:host]
-  pid = start_child_process_ssh(host, ssh_config_filepath)
+  pid = platform.start_child_process_ssh(host, ssh_config_filepath)
 
-  if info[:check_tcps].any? { |check_tcp| !wait_tcp_port_is_open(check_tcp[:host], check_tcp[:port], pid) }
+  if info[:check_tcps].any? { |check_tcp| !platform.wait_tcp_port_is_open(check_tcp[:host], check_tcp[:port], pid) }
     # failed
-    kill_child_process(pid)
+    platform.kill_child_process(pid)
     return nil
   end
   pid
 end
 
-def start_evaluate(ssh_config_dir)
+def start_evaluate(platform, ssh_config_dir)
   sorted_nodes = vaidate_nodes
   return false unless sorted_nodes
 
@@ -133,13 +94,13 @@ def start_evaluate(ssh_config_dir)
 
   pids = []
   sorted_nodes.each do |node|
-    pid = launch_node_blocking(node.info, ssh_config_filepath)
+    pid = launch_node_blocking(platform, node.info, ssh_config_filepath)
     next if pid
 
     @logger.error("Failed to launch node: #{node.host}")
     # kill all
     pids.each do |pid|
-      kill_child_process(pid)
+      platform.kill_child_process(pid)
     end
     return false
   end
@@ -169,7 +130,9 @@ end
 config_path = File.join(ssh_config_dir, 'config.rb')
 load config_path
 
-unless start_evaluate(ssh_config_dir)
+platform = PlatformImpl.new(@logger)
+
+unless start_evaluate(platform, ssh_config_dir)
   @logger.error('Failed to start')
   exit 1
 end
