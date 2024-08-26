@@ -3,74 +3,9 @@ require 'socket'
 require 'timeout'
 
 require_relative 'platform'
+require_relative 'node'
 
 @logger = Logger.new(STDOUT)
-
-# -------------------------------------
-
-@nodes = []
-
-class Node
-  # info{host: 'host', check_tcps: [{host: 'host', port: 22}] }
-  def initialize(info)
-    @info = info
-    @before_nodes = []
-    @after_nodes = []
-  end
-
-  def then(node)
-    @after_nodes.push(node)
-    node.before_nodes.push(self)
-    node
-  end
-
-  attr_reader :before_nodes, :after_nodes, :info
-
-  def host
-    @info[:host]
-  end
-end
-
-# TODO
-# class Group < Node
-#   def initialize(*nodes)
-#     @nodes = nodes
-#   end
-# end
-
-# -------------------------------------
-
-# TODO: Use systemd targets?
-def vaidate_nodes
-  stack = @nodes.select { |node| node.before_nodes.empty? }
-  if stack.empty?
-    @logger.error('No start node')
-    return false
-  end
-
-  sorted_nodes = []
-  # detect cycle
-  reached = {}
-  stack.each do |node|
-    reached[node] = 0
-  end
-  until stack.empty?
-    node = stack.pop
-    sorted_nodes.push(node)
-    node.after_nodes.each do |after_node|
-      reached[after_node] ||= 0
-      reached[after_node] += 1
-      stack.push(after_node) if after_node.before_nodes.size == reached[after_node]
-    end
-  end
-
-  if sorted_nodes.size != @nodes.size
-    @logger.error('Cycle detected')
-    return nil
-  end
-
-  sorted_nodes
-end
 
 # -------------------------------------
 
@@ -86,10 +21,7 @@ def launch_node_blocking(platform, info, ssh_config_filepath)
   pid
 end
 
-def start_evaluate(platform, ssh_config_dir)
-  sorted_nodes = vaidate_nodes
-  return false unless sorted_nodes
-
+def start_evaluate(platform, ssh_config_dir, sorted_nodes)
   ssh_config_filepath = File.join(ssh_config_dir, 'config')
 
   pids = []
@@ -109,6 +41,8 @@ def start_evaluate(platform, ssh_config_dir)
 end
 
 # -------------------------------------
+
+@nodes = []
 
 def p_conn(info)
   node = Node.new(info)
@@ -131,8 +65,15 @@ config_path = File.join(ssh_config_dir, 'config.rb')
 load config_path
 
 platform = PlatformImpl.new(@logger)
+node_manager = NodeManager.new(@logger, @nodes)
 
-unless start_evaluate(platform, ssh_config_dir)
+sorted_nodes = node_manager.vaidate_nodes
+unless sorted_nodes
+  @logger.error('Failed to validate nodes')
+  exit 1
+end
+
+unless start_evaluate(platform, ssh_config_dir, sorted_nodes)
   @logger.error('Failed to start')
   exit 1
 end
