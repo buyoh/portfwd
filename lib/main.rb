@@ -57,7 +57,7 @@ end
 ssh_config_dir = ARGV[0]
 
 if ssh_config_dir.nil?
-  puts 'Usage: ruby app.rb ssh_config_dir'
+  puts 'Usage: ruby main.rb ssh_config_dir'
   exit 2
 end
 
