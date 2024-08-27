@@ -18,6 +18,13 @@ class PlatformImpl
     spawn('ssh', '-N', '-F', ssh_config_filepath, host)
   end
 
+  def is_alive_child_process(pid)
+    return false unless Process.getpgid(pid) == Process.pid
+
+    ret = Process.waitpid2(pid, Process::WNOHANG)
+    ret.nil?
+  end
+
   def kill_child_process(pid)
     return unless Process.getpgid(pid) == Process.pid
 
