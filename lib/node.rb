@@ -43,7 +43,7 @@ class NodeManager
     stack = @nodes.select { |node| node.before_nodes.empty? }
     if stack.empty?
       @logger.error('No start node')
-      return false
+      return nil
     end
 
     sorted_nodes = []
