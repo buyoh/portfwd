@@ -4,8 +4,14 @@ class App
     @platform = platform
   end
 
-  def start(ssh_config_dir, sorted_nodes)
+  def start(ssh_config_dir, node_manager)
     ssh_config_filepath = File.join(ssh_config_dir, 'config')
+
+    sorted_nodes = node_manager.vaidate_nodes
+    unless sorted_nodes
+      @logger.error('Failed to validate nodes')
+      return false
+    end
 
     pids = []
     sorted_nodes.each do |node|

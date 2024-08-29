@@ -31,15 +31,18 @@ class NodeManager
   def initialize(logger, nodes = [])
     @logger = logger
     @nodes = nodes
+    @sorted_nodes = nil
   end
 
-  attr_accessor :nodes
+  attr_reader :nodes
 
   # Validate the nodes and return the sorted nodes
   # - Check if there is a start node
   # - Check if no cycle
   # - Return the sorted nodes (topological sort) if no error
   def vaidate_nodes
+    return @sorted_nodes if @sorted_nodes
+
     stack = @nodes.select { |node| node.before_nodes.empty? }
     if stack.empty?
       @logger.error('No start node')
@@ -67,6 +70,6 @@ class NodeManager
       return nil
     end
 
-    sorted_nodes
+    @sorted_nodes = sorted_nodes
   end
 end

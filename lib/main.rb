@@ -33,13 +33,7 @@ load config_path
 platform = PlatformImpl.new(@logger)
 node_manager = NodeManager.new(@logger, @nodes)
 
-sorted_nodes = node_manager.vaidate_nodes
-unless sorted_nodes
-  @logger.error('Failed to validate nodes')
-  exit 1
-end
-
-app = App.new(@logger, platform)
+app = App.new(@logger, node_manager)
 
 unless app.start(ssh_config_dir, sorted_nodes)
   @logger.error('Failed app')
