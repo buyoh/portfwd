@@ -1,6 +1,4 @@
 require 'logger'
-require 'socket'
-require 'timeout'
 
 require_relative 'app'
 require_relative 'platform'

@@ -1,3 +1,6 @@
+require 'socket'
+require 'timeout'
+
 class PlatformImpl
   def initialize(logger)
     @logger = logger
