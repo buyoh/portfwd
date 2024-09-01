@@ -1,4 +1,71 @@
 class App
+  class NodeProcessObserver
+    def initialize(logger, platform, host, check_tcps)
+      @logger = logger
+      @platform = platform
+      @host = host
+      @check_tcps = check_tcps
+      @pid = nil
+    end
+
+    def initialized?
+      !@pid.nil?
+    end
+
+    def launch_blocking
+      @pid = @platform.start_child_process_ssh(@host)
+      unless @pid
+        @logger.error("Failed to launch node: #{@host}")
+        return false
+      end
+
+      wait_ok, check_tcp = wait_connection
+      unless wait_ok
+        @logger.error("Failed to connect to #{check_tcp[:host]}:#{check_tcp[:port]}")
+        @platform.kill_child_process(@pid)
+        @pid = nil
+        return false
+      end
+
+      true
+    end
+
+    def terminate
+      return unless @pid
+
+      @platform.kill_child_process(@pid)
+      @pid = nil
+    end
+
+    def wait_connection
+      @check_tcps.each do |check_tcp|
+        tcp_host = check_tcp[:host]
+        tcp_port = check_tcp[:port]
+        try_count = 10
+        unless @platform.wait_tcp_port_is_open(tcp_host, tcp_port, @pid, try_count)
+          @logger.error("Failed to connect to #{tcp_host}:#{tcp_port}")
+          return false
+        end
+      end
+      true
+    end
+
+    def check_connection
+      @check_tcps.each do |check_tcp|
+        tcp_host = check_tcp[:host]
+        tcp_port = check_tcp[:port]
+        return [false, check_tcp] unless @platform.wait_tcp_port_is_open(tcp_host, tcp_port, @pid)
+      end
+      [true, nil]
+    end
+
+    def is_alive_child_process
+      return false unless @pid
+
+      @platform.is_alive_child_process(@pid)
+    end
+  end
+
   def initialize(logger, platform)
     @logger = logger
     @platform = platform
@@ -13,16 +80,21 @@ class App
       return false
     end
 
-    pids = []
+    failed = false
+    observers = []
     sorted_nodes.each do |node|
-      pid = launch_node_blocking(@platform, node.info, ssh_config_filepath)
-      next if pid
+      observer = NodeProcessObserver.new(@logger, @platform, node.host, node.info[:check_tcps])
 
-      @logger.error("Failed to launch node: #{node.host}")
-      # kill all
-      pids.each do |pid|
-        @platform.kill_child_process(pid)
+      observers.push(observer)
+
+      unless observer.launch_blocking
+        failed = true
+        break
       end
+    end
+
+    if failed
+      observers.each(&:terminate)
       return false
     end
 
