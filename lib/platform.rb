@@ -34,8 +34,6 @@ class PlatformImpl
     Process.kill('KILL', pid)
   end
 
-  private
-
   def check_pid_and_tcp_port_is_open(ip, port, pid)
     @logger.debug("check_pid_and_tcp_port_is_open ip=#{ip}, port=#{port}")
     begin
