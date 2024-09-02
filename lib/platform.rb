@@ -6,6 +6,14 @@ class PlatformImpl
     @logger = logger
   end
 
+  def terminate
+    # do nothing
+  end
+
+  def add_ssh_host_to_tcp_host_for_test(ssh_host, tcp_ip, tcp_port)
+    # do nothing
+  end
+
   def wait_tcp_port_is_open(ip, port, pid, trycount = 10)
     @logger.debug("wait_tcp_port_is_open ip=#{ip}, port=#{port}")
     trycount.times do |_i|
@@ -65,6 +73,10 @@ class PlatformStub
     @started_ssh_host_to_pid = {}
     @started_pid_to_ssh_host = {}
     @pid_counter = 10
+  end
+
+  def terminate
+    # do nothing
   end
 
   def add_ssh_host_to_tcp_host_for_test(ssh_host, tcp_ip, tcp_port)
