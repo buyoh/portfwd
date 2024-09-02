@@ -5,7 +5,7 @@ require_relative '../lib/node'
 
 describe 'Node' do
   before do
-    @logger = Logger.new(STDOUT)
+    @logger = Logger.new(nil)
   end
 
   it 'should validate nodes successfully' do
