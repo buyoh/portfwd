@@ -43,11 +43,21 @@ class NodeManager
   def vaidate_nodes
     return @sorted_nodes if @sorted_nodes
 
-    stack = @nodes.select { |node| node.before_nodes.empty? }
-    if stack.empty?
-      @logger.error('No start node')
+    sorted_nodes, err = calc_topological_sort
+
+    if err
+      @logger.error(err)
       return nil
     end
+
+    @sorted_nodes = sorted_nodes
+  end
+
+  private
+
+  def calc_topological_sort
+    stack = @nodes.select { |node| node.before_nodes.empty? }
+    return [nil, 'No start node'] if stack.empty?
 
     sorted_nodes = []
     # detect cycle
@@ -65,11 +75,8 @@ class NodeManager
       end
     end
 
-    if sorted_nodes.size != @nodes.size
-      @logger.error('Cycle detected')
-      return nil
-    end
+    return [nil, 'Cycle detected'] if sorted_nodes.size != @nodes.size
 
-    @sorted_nodes = sorted_nodes
+    [sorted_nodes, nil]
   end
 end
