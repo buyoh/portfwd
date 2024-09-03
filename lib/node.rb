@@ -43,8 +43,13 @@ class NodeManager
   def vaidate_nodes
     return @sorted_nodes if @sorted_nodes
 
-    sorted_nodes, err = calc_topological_sort
+    ok, err = check_unique_host
+    if err
+      @logger.error(err)
+      return nil
+    end
 
+    sorted_nodes, err = calc_topological_sort
     if err
       @logger.error(err)
       return nil
@@ -54,6 +59,13 @@ class NodeManager
   end
 
   private
+
+  def check_unique_host
+    @node.map(&:host).tally.each do |host, count|
+      return [false, "Duplicate host: #{host}"] if count > 1
+    end
+    [true, nil]
+  end
 
   def calc_topological_sort
     stack = @nodes.select { |node| node.before_nodes.empty? }
