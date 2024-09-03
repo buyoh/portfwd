@@ -61,7 +61,7 @@ class NodeManager
   private
 
   def check_unique_host
-    @node.map(&:host).tally.each do |host, count|
+    @nodes.map { |n| n.host }.tally.each do |host, count|
       return [false, "Duplicate host: #{host}"] if count > 1
     end
     [true, nil]
