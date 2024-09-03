@@ -58,6 +58,11 @@ class NodeManager
     @sorted_nodes = sorted_nodes
   end
 
+  def solve_invalidated_nodes(invalidated_hosts)
+    invalidated_nodes = invalidated_hosts.map { |h| @nodes.find { |n| n.host == h } }
+    calc_invalidated_nodes(invalidated_nodes)
+  end
+
   private
 
   def check_unique_host
@@ -90,5 +95,20 @@ class NodeManager
     return [nil, 'Cycle detected'] if sorted_nodes.size != @nodes.size
 
     [sorted_nodes, nil]
+  end
+
+  def calc_invalidated_nodes(invalidated_nodes)
+    all_invalidated_nodes = invalidated_nodes.clone
+
+    que = invalidated_nodes
+    until que.empty?
+      node = que.pop
+      node.after_nodes.each do |after_node|
+        all_invalidated_nodes.push(after_node)
+        que.push(after_node)
+      end
+    end
+
+    all_invalidated_nodes
   end
 end
