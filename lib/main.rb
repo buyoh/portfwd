@@ -38,6 +38,12 @@ unless app.start(ssh_config_dir, sorted_nodes)
   exit 1
 end
 
-@logger.info('Done')
+begin
+  sleep 5 while app.running?
+rescue SignalException => e
+  @logger.info("Signal: #{e}")
+  app.terminate
+  sleep 0.5
+end
 
-# Quit
+@logger.info('Quit')
