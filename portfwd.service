@@ -4,7 +4,7 @@ Description=SSH tunnel
 [Service]
 User=mai-portfwd
 Group=nogroup
-Type=forking
+Type=simple
 Restart=always
 RestartSec=10
 ExecStart=/usr/bin/ruby ~/lib/main.rb ~/.ssh
