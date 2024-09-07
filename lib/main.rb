@@ -31,9 +31,9 @@ load config_path
 platform = PlatformImpl.new(@logger)
 node_manager = NodeManager.new(@logger, @nodes)
 
-app = App.new(@logger, node_manager)
+app = App.new(@logger, platform)
 
-unless app.start(ssh_config_dir, sorted_nodes)
+unless app.start(ssh_config_dir, node_manager)
   @logger.error('Failed app')
   exit 1
 end
