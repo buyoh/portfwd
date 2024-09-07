@@ -40,6 +40,8 @@ class PlatformImpl
     return unless Process.getpgid(pid) == Process.pid
 
     Process.kill('KILL', pid)
+  rescue Errno::SystemCallError => e
+    @logger.error("Failed to kill pid=#{pid}: #{e}")
   end
 
   def check_pid_and_tcp_port_is_open(ip, port, pid)
