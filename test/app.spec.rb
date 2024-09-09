@@ -32,6 +32,8 @@ describe 'App' do
       ['tcp4', 8000] => 'host4'
     }
 
+    @ssh_config_dir = 'fixtures/ssh_config'
+
     @node_manager = NodeManager.new(@logger, [node0, node1])
     @app = App.new(@logger, @platform)
     @app.update_config(
@@ -47,15 +49,13 @@ describe 'App' do
   end
 
   it 'should fail `start` due to cycle' do
-    ssh_config_dir = 'fixtures/ssh_config'
-
     node0 = Node.new({ host: 'host0', check_tcps: [{ host: 'tcp0', port: 8000 }, { host: 'tcp1', port: 8010 }] })
     node1 = Node.new({ host: 'host4', check_tcps: [{ host: 'tcp4', port: 8000 }] })
     node0.then(node1)
     node1.then(node0)
     node_manager = NodeManager.new(@logger, [node0, node1])
 
-    assert(!@app.start(ssh_config_dir, node_manager))
+    assert(!@app.start(@ssh_config_dir, node_manager))
     sleep 0.05
     assert(!@app.running?)
 
@@ -63,15 +63,13 @@ describe 'App' do
   end
 
   it 'should stop due to broken connection' do
-    ssh_config_dir = 'fixtures/ssh_config'
-
     node0 = Node.new({ host: 'host0', check_tcps: [{ host: 'tcp0', port: 8000 }, { host: 'tcp999', port: 8010 }] })
     node1 = Node.new({ host: 'host4', check_tcps: [{ host: 'tcp4', port: 8000 }] })
     node0.then(node1)
     node_manager = NodeManager.new(@logger, [node0, node1])
 
     # Application starts successfully, but it will stop due to broken connection
-    assert(@app.start(ssh_config_dir, node_manager))
+    assert(@app.start(@ssh_config_dir, node_manager))
     sleep 0.05
     assert(!@app.running?)
 
@@ -79,8 +77,6 @@ describe 'App' do
   end
 
   it 'should call `kill_child_process`' do
-    ssh_config_dir = 'fixtures/ssh_config'
-
     pids = []
     knwon_pids = []
     unknown_pids = []
@@ -99,7 +95,7 @@ describe 'App' do
       original.call(pid)
     end
 
-    assert(@app.start(ssh_config_dir, @node_manager))
+    assert(@app.start(@ssh_config_dir, @node_manager))
     sleep 0.05
     assert(@app.running?)
     assert(pids.size == 2)
@@ -113,8 +109,6 @@ describe 'App' do
   end
 
   it 'should call `check_connection` and `is_alive_child_process`' do
-    ssh_config_dir = 'fixtures/ssh_config'
-
     host_to_pid = {}
     spy_on(@platform, :start_child_process_ssh) do |original, args|
       host, _ssh_config_filepath = args
@@ -149,7 +143,7 @@ describe 'App' do
       original.call(*args)
     end
 
-    assert(@app.start(ssh_config_dir, @node_manager))
+    assert(@app.start(@ssh_config_dir, @node_manager))
     sleep 0.05
     assert(@app.running?)
     assert(host_to_pid.size.positive?)
@@ -167,8 +161,6 @@ describe 'App' do
   end
 
   it 'should restart nodes when `check_connection` return false' do
-    ssh_config_dir = 'fixtures/ssh_config'
-
     pids = []
     spy_on(@platform, :start_child_process_ssh) do |original, args|
       pid = original.call(*args)
@@ -184,7 +176,7 @@ describe 'App' do
       original.call(pid)
     end
 
-    assert(@app.start(ssh_config_dir, @node_manager))
+    assert(@app.start(@ssh_config_dir, @node_manager))
     sleep 0.05
     assert(@app.running?)
     assert(pids.size.positive?)
