@@ -34,7 +34,7 @@ class PlatformImpl
 
     ret = Process.waitpid2(pid, Process::WNOHANG)
     ret.nil?
-  rescue Errno::SystemCallError => e
+  rescue SystemCallError => e
     @logger.error("Failed to check pid=#{pid}: #{e}")
     false
   end
@@ -43,7 +43,7 @@ class PlatformImpl
     return unless Process.getpgid(pid) == Process.pid
 
     Process.kill('KILL', pid)
-  rescue Errno::SystemCallError => e
+  rescue SystemCallError => e
     @logger.error("Failed to kill pid=#{pid}: #{e}")
   end
 
@@ -63,7 +63,7 @@ class PlatformImpl
         return false
       end
     rescue Timeout::Error
-    rescue Errno::SystemCallError
+    rescue SystemCallError
     end
     false
   end
