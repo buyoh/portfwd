@@ -5,6 +5,7 @@ require_relative 'platform'
 require_relative 'node'
 
 @logger = Logger.new(STDOUT)
+@logger.level = Logger::INFO # TODO: argument
 
 @nodes = []
 
