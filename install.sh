@@ -1,13 +1,30 @@
 #!/bin/bash
 
-ARG_USER=mai-portfwd
-ARG_UID=2525
+# --- arguments ---
 
-ARG_APPDIR=/opt/mai-portfwd
+ARG_USE_ANOTHER_USER=${ARG_USE_ANOTHER_USER:-true}
+ARG_USER=${ARG_USER:-mai-portfwd}
+ARG_UID=${ARG_UID:-2525}
 
+ARG_USE_SUDO=${ARG_USE_SUDO:-true}
+ARG_ALWAYS_YES=${ARG_ALWAYS_YES:-false}
+
+ARG_USE_CURRENT_DIR=${ARG_USE_CURRENT_DIR:-false}
+ARG_APPDIR=${ARG_APPDIR:-/opt/mai-portfwd}
+
+# --- main ---
+
+WRAP_SUDO=
+if [[ "$ARG_USE_SUDO" == true ]]; then
+  WRAP_SUDO=sudo
+fi
 set -e
 
 cd $(dirname $0)
+
+if [[ "$ARG_USE_CURRENT_DIR" == true ]]; then
+  ARG_APPDIR=$(pwd)
+fi
 
 if [[ ! -d .ssh ]]; then
   echo "config directory '.ssh' not found"
@@ -21,34 +38,46 @@ if [[ ! -f .ssh/config ]]; then
   exit 1
 fi
 
-echo "Install to $ARG_APPDIR. Continue? (Y/n)"
-
-read l_confirm
-if [[ 'Y' != $l_confirm ]]; then
-  echo 'abort'
-  exit 1
+if [[ "$ARG_ALWAYS_YES" != true ]]; then
+  echo "Install to $ARG_APPDIR. Continue? (Y/n)"
+  read l_confirm
+  if [[ 'Y' != $l_confirm ]]; then
+    echo 'abort'
+    exit 1
+  fi
 fi
 
-if ! id $ARG_USER > /dev/null; then
-  echo "User '$ARG_USER' does not exist. Create"
-  sudo useradd -u 2525 -g nogroup -M -d /nonexistent -s /usr/sbin/nologin mai-portfwd
+if [[ "$ARG_USE_ANOTHER_USER" == true ]]; then
+  if ! id "$ARG_USER" > /dev/null; then
+    echo "User '$ARG_USER' does not exist. Create"
+    $WRAP_SUDO useradd -u "$ARG_UID" -g nogroup -M -d /nonexistent -s /usr/sbin/nologin "$ARG_USER"
+  fi
 fi
 
-sudo mkdir -p $ARG_APPDIR
 
-sudo cp -ar .ssh $ARG_APPDIR
-sudo cp -a portfwd.service $ARG_APPDIR
-sudo cp -ar lib $ARG_APPDIR
+if [[ "$ARG_USE_CURRENT_DIR" == true ]]; then
+  echo "Using current directory as appdir. Skip copy"
+else
+  $WRAP_SUDO mkdir -p "$ARG_APPDIR"
 
-sudo sed -i "s|[~]/lib|$ARG_APPDIR/lib|g" $ARG_APPDIR/portfwd.service
-sudo sed -i "s|[~]/[.]ssh|$ARG_APPDIR/.ssh|g" $ARG_APPDIR/portfwd.service
-sudo sed -i "s|[~]/[.]ssh|$ARG_APPDIR/.ssh|g" $ARG_APPDIR/.ssh/config
+  $WRAP_SUDO cp -ar .ssh "$ARG_APPDIR"
+  $WRAP_SUDO cp -a portfwd.service "$ARG_APPDIR"
+  $WRAP_SUDO cp -ar lib "$ARG_APPDIR"
+fi
 
-sudo chmod -R 700 $ARG_APPDIR/.ssh
-sudo chown -R $ARG_USER:nogroup $ARG_APPDIR/.ssh
+$WRAP_SUDO sed -i "s|[~]/lib|$ARG_APPDIR/lib|g" "$ARG_APPDIR/portfwd.service"
+$WRAP_SUDO sed -i "s|[~]/[.]ssh|$ARG_APPDIR/.ssh|g" "$ARG_APPDIR/portfwd.service"
+$WRAP_SUDO sed -i "s|[~]/[.]ssh|$ARG_APPDIR/.ssh|g" "$ARG_APPDIR/.ssh/config"
 
-sudo cp $ARG_APPDIR/portfwd.service /etc/systemd/system/portfwd.service
+$WRAP_SUDO chmod -R 700 "$ARG_APPDIR/.ssh"
+if [ "$WRAP_SUDO" != "" ]; then
+  if [[ "$ARG_USE_ANOTHER_USER" == true ]]; then
+    $WRAP_SUDO chown -R $ARG_USER:nogroup "$ARG_APPDIR/.ssh"
+  fi
+fi
 
-sudo systemctl daemon-reload
-sudo systemctl enable portfwd
-sudo systemctl start portfwd
+$WRAP_SUDO cp "$ARG_APPDIR/portfwd.service" /etc/systemd/system/portfwd.service
+
+$WRAP_SUDO systemctl daemon-reload
+$WRAP_SUDO systemctl enable portfwd
+$WRAP_SUDO systemctl start portfwd
