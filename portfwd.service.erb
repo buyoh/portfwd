@@ -1,0 +1,15 @@
+[Unit]
+Description=SSH tunnel
+
+[Service]
+<% if user && !user.empty? && group && !group.empty? %>
+User=<%= user %>
+Group=<%= group %>
+<% end %>
+Type=simple
+Restart=always
+RestartSec=10
+ExecStart=/usr/bin/ruby <%= app_dir %>/lib/main.rb <%= ssh_dir %>
+
+[Install]
+WantedBy = multi-user.target

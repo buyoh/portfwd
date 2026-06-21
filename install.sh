@@ -18,9 +18,24 @@ WRAP_SUDO=
 if [[ "$ARG_USE_SUDO" == true ]]; then
   WRAP_SUDO=sudo
 fi
-set -e
+set -euo pipefail
 
-cd $(dirname $0)
+cd "$(dirname "$0")"
+
+render_template() {
+  local template_path="$1"
+  local output_path="$2"
+
+  local cmd=(ruby "$(dirname "$0")/tools/render_erb.rb" "$template_path" "$output_path" "$ARG_APPDIR" "$ARG_APPDIR/.ssh")
+  if [[ "$ARG_USE_ANOTHER_USER" == true ]]; then
+    cmd+=("$ARG_USER" "nogroup")
+  fi
+  if [[ -n "$WRAP_SUDO" ]]; then
+    cmd=("$WRAP_SUDO" "${cmd[@]}")
+  fi
+
+  "${cmd[@]}"
+}
 
 if [[ "$ARG_USE_CURRENT_DIR" == true ]]; then
   ARG_APPDIR=$(pwd)
@@ -28,20 +43,20 @@ fi
 
 if [[ ! -d .ssh ]]; then
   echo "config directory '.ssh' not found"
-  echo "Copy 'ssh' to '.ssh' and edit 'config' and 'id_rsa' file"
+  echo "Copy 'ssh' to '.ssh' and edit 'config.erb' and 'id_rsa' file"
   exit 1
 fi
 
-if [[ ! -f .ssh/config ]]; then
-  echo "config file '.ssh/config' not found"
-  echo "Copy 'ssh/config' to '.ssh/config' and edit it"
+if [[ ! -f .ssh/config.erb ]]; then
+  echo "config file '.ssh/config.erb' not found"
+  echo "Copy 'ssh/config.erb' to '.ssh/config.erb' and edit it"
   exit 1
 fi
 
 if [[ "$ARG_ALWAYS_YES" != true ]]; then
   echo "Install to $ARG_APPDIR. Continue? (Y/n)"
-  read l_confirm
-  if [[ 'Y' != $l_confirm ]]; then
+  read -r l_confirm
+  if [[ 'Y' != "$l_confirm" ]]; then
     echo 'abort'
     exit 1
   fi
@@ -61,18 +76,16 @@ else
   $WRAP_SUDO mkdir -p "$ARG_APPDIR"
 
   $WRAP_SUDO cp -ar .ssh "$ARG_APPDIR"
-  $WRAP_SUDO cp -a portfwd.service "$ARG_APPDIR"
   $WRAP_SUDO cp -ar lib "$ARG_APPDIR"
 fi
 
-$WRAP_SUDO sed -i "s|[~]/lib|$ARG_APPDIR/lib|g" "$ARG_APPDIR/portfwd.service"
-$WRAP_SUDO sed -i "s|[~]/[.]ssh|$ARG_APPDIR/.ssh|g" "$ARG_APPDIR/portfwd.service"
-$WRAP_SUDO sed -i "s|[~]/[.]ssh|$ARG_APPDIR/.ssh|g" "$ARG_APPDIR/.ssh/config"
+render_template "portfwd.service.erb" "$ARG_APPDIR/portfwd.service"
+render_template "ssh/config.erb" "$ARG_APPDIR/.ssh/config"
 
 $WRAP_SUDO chmod -R 700 "$ARG_APPDIR/.ssh"
-if [ "$WRAP_SUDO" != "" ]; then
+if [[ -n "$WRAP_SUDO" ]]; then
   if [[ "$ARG_USE_ANOTHER_USER" == true ]]; then
-    $WRAP_SUDO chown -R $ARG_USER:nogroup "$ARG_APPDIR/.ssh"
+    $WRAP_SUDO chown -R "$ARG_USER":nogroup "$ARG_APPDIR/.ssh"
   fi
 fi
 
