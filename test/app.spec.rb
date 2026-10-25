@@ -196,4 +196,48 @@ describe 'App' do
 
     assert((before_pids.sort & after_pids.sort).empty?)
   end
+
+  def wait_until(timeout_sec = 3)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout_sec
+    until yield
+      return false if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+      sleep 0.01
+    end
+    true
+  end
+
+  it 'should stop and report failure when an exception is raised while launching' do
+    launched_pids = []
+    spy_on(@platform, :start_child_process_ssh) do |original, args|
+      raise 'launch error' if args[0] == 'host4'
+
+      pid = original.call(*args)
+      launched_pids << pid
+      pid
+    end
+
+    assert(@app.start(@ssh_config_dir, @node_manager))
+    assert(wait_until { !@app.running? })
+    assert(@app.failed?)
+    assert_equal(1, launched_pids.size)
+    assert(!@platform.is_alive_child_process(launched_pids[0]))
+  end
+
+  it 'should report failure when launching nodes fails' do
+    node_manager = NodeManager.new(@logger, [Node.new({ host: 'unknown', check_tcps: [{ host: 'tcp0', port: 8000 }] })])
+
+    assert(@app.start(@ssh_config_dir, node_manager))
+    assert(wait_until { !@app.running? })
+    assert(@app.failed?)
+  end
+
+  it 'should not report failure when terminated normally' do
+    assert(@app.start(@ssh_config_dir, @node_manager))
+    assert(@app.running?)
+
+    @app.terminate
+    assert(!@app.running?)
+    assert(!@app.failed?)
+  end
 end

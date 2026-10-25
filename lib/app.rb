@@ -33,12 +33,8 @@ class App
     def terminate
       return unless @pid
 
-      unless @platform.is_alive_child_process(@pid)
-        @pid = nil
-        return
-      end
-
-      @platform.kill_child_process(@pid)
+      @platform.kill_child_process(@pid) if @platform.is_alive_child_process(@pid)
+    ensure
       @pid = nil
     end
 
@@ -72,6 +68,7 @@ class App
     @logger = logger
     @platform = platform
     @running = false
+    @failed = false
     @app_thread = nil
     @config = Struct.new(
       :check_connection_interval_sec,
@@ -87,6 +84,10 @@ class App
     @running
   end
 
+  def failed?
+    @failed
+  end
+
   def start(ssh_config_dir, node_manager)
     if @running
       @logger.error('Already running')
@@ -94,6 +95,7 @@ class App
     end
 
     @running = true
+    @failed = false
 
     ssh_config_filepath = File.join(ssh_config_dir, 'config')
 
@@ -118,7 +120,7 @@ class App
 
     @logger.info('Terminating app thread')
     begin
-      @app_thread.run
+      @app_thread.wakeup if @app_thread.alive?
       @app_thread.join
     rescue ThreadError => e
       # dead thread?
@@ -131,53 +133,80 @@ class App
 
   def start_app_thread(sorted_nodes, ssh_config_filepath)
     Thread.new do
-      while @running
-        @logger.info('Start launching nodes')
-
-        # TODO: 部分的に再起動するようにする
-        observers = launch_all_nodes_blocking(sorted_nodes, ssh_config_filepath)
-        unless observers
-          @logger.error('Failed to launch nodes')
-          break
-        end
-
-        @logger.info('Launched all nodes')
-
+      observers = nil
+      completed = false
+      begin
         while @running
-          sleep @config.check_connection_interval_sec
+          @logger.info('Start launching nodes')
 
-          unless are_all_nodes_connection_alive?(observers)
-            @logger.info('Detected a node is down')
+          # TODO: 部分的に再起動するようにする
+          observers = launch_all_nodes_blocking(sorted_nodes, ssh_config_filepath)
+          unless observers
+            @logger.error('Failed to launch nodes')
+            @failed = true
             break
           end
+
+          @logger.info('Launched all nodes')
+
+          while @running
+            sleep @config.check_connection_interval_sec
+
+            unless are_all_nodes_connection_alive?(observers)
+              @logger.info('Detected a node is down')
+              break
+            end
+          end
+
+          @logger.info('Restarting nodes')
+          terminate_observers(observers)
+          observers = nil
+
+          sleep @config.terminate_sleep_sec if @running
         end
-
-        @logger.info('Restarting nodes')
-        observers.each(&:terminate)
-
-        sleep @config.terminate_sleep_sec if @running
+        completed = true
+      rescue StandardError => e
+        @logger.error("App thread crashed: #{e.class}: #{e.message}")
+        @logger.error(e.backtrace.join("\n")) if e.backtrace
+      ensure
+        @running = false
+        # also treat termination by non-StandardError (e.g. Thread#kill) as failure
+        @failed = true unless completed
+        terminate_observers(observers) if observers
+        @logger.info('Terminated')
       end
-      @running = false
-      @logger.info('Terminated')
+    end
+  end
+
+  def terminate_observers(observers)
+    observers.each do |observer|
+      observer.terminate
+    rescue StandardError => e
+      @logger.error("Failed to terminate observer: #{e.class}: #{e.message}")
     end
   end
 
   def launch_all_nodes_blocking(sorted_nodes, ssh_config_filepath)
     failed = false
     observers = []
-    sorted_nodes.each do |node|
-      observer = NodeProcessObserver.new(@logger, @platform, node.host, node.info[:check_tcps])
+    begin
+      sorted_nodes.each do |node|
+        observer = NodeProcessObserver.new(@logger, @platform, node.host, node.info[:check_tcps])
 
-      observers.push(observer)
+        observers.push(observer)
 
-      unless observer.launch_blocking(ssh_config_filepath)
-        failed = true
-        break
+        unless observer.launch_blocking(ssh_config_filepath)
+          failed = true
+          break
+        end
       end
+    rescue StandardError
+      terminate_observers(observers)
+      raise
     end
 
     if failed
-      observers.each(&:terminate)
+      terminate_observers(observers)
       return nil
     end
     observers

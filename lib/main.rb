@@ -34,17 +34,25 @@ node_manager = NodeManager.new(@logger, @nodes)
 
 app = App.new(@logger, platform)
 
-unless app.start(ssh_config_dir, node_manager)
-  @logger.error('Failed app')
-  exit 1
+begin
+  unless app.start(ssh_config_dir, node_manager)
+    @logger.error('Failed app')
+    exit 1
+  end
+
+  begin
+    sleep 5 while app.running?
+  rescue SignalException => e
+    @logger.info("Signal: #{e}")
+  end
+ensure
+  app.terminate
+  platform.terminate
 end
 
-begin
-  sleep 5 while app.running?
-rescue SignalException => e
-  @logger.info("Signal: #{e}")
-  app.terminate
-  sleep 0.5
+if app.failed?
+  @logger.error('App failed')
+  exit 1
 end
 
 @logger.info('Quit')
