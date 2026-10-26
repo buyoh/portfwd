@@ -13,6 +13,8 @@ ARG_USE_CURRENT_DIR=${ARG_USE_CURRENT_DIR:-false}
 ARG_APPDIR=${ARG_APPDIR:-/opt/mai-portfwd}
 
 ARG_INSTALL_SYSTEMD=${ARG_INSTALL_SYSTEMD:-true}
+# ruby used by the service at runtime (not the one rendering templates during install)
+ARG_RUBY=${ARG_RUBY:-/usr/bin/ruby}
 ARG_STARTUP_CHECK_SEC=${ARG_STARTUP_CHECK_SEC:-20}
 
 # --- main ---
@@ -32,9 +34,12 @@ render_template() {
   local template_path="$1"
   local output_path="$2"
 
-  local cmd=(ruby "$(dirname "$0")/tools/render_erb.rb" "$template_path" "$output_path" "$ARG_APPDIR" "$ARG_APPDIR/.ssh")
+  local cmd=(ruby "$(dirname "$0")/tools/render_erb.rb" "$template_path" "$output_path"
+    "app_dir=$ARG_APPDIR" "ssh_dir=$ARG_APPDIR/.ssh" "ruby=$ARG_RUBY")
   if [[ "$ARG_USE_ANOTHER_USER" == true ]]; then
-    cmd+=("$ARG_USER" "nogroup")
+    cmd+=("user=$ARG_USER" "group=nogroup")
+  else
+    cmd+=("user=root" "group=root")
   fi
   if [[ -n "$WRAP_SUDO" ]]; then
     cmd=("$WRAP_SUDO" "${cmd[@]}")
@@ -124,6 +129,12 @@ fi
 if [[ ! -f .ssh/config.erb ]]; then
   echo "config file '.ssh/config.erb' not found"
   echo "Copy 'ssh/config.erb' to '.ssh/config.erb' and edit it"
+  exit 1
+fi
+
+if [[ "$ARG_INSTALL_SYSTEMD" == true && ( "$ARG_RUBY" != /* || ! -x "$ARG_RUBY" ) ]]; then
+  echo "ruby '$ARG_RUBY' is not an absolute path to an executable"
+  echo "Set ARG_RUBY to the ruby the service should run with"
   exit 1
 fi
 

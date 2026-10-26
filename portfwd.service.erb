@@ -1,15 +1,38 @@
+<%
+  raise 'user and group are required to render the unit' if user.to_s.empty? || group.to_s.empty?
+
+  # ProtectHome=yes hides the code or ruby when they live under a home directory
+  under_home = [app_dir, ruby].any? do |path|
+    resolved = File.exist?(path) ? File.realpath(path) : path
+    [path, resolved].any? { |p| p.start_with?('/home/', '/root/', '/run/user/') }
+  end
+  # root without capabilities cannot read files owned by the invoking user (ARG_USE_CURRENT_DIR mode)
+  capabilities = user == 'root' && under_home ? 'CAP_DAC_READ_SEARCH' : ''
+-%>
 [Unit]
 Description=SSH tunnel
+Wants=network-online.target
+After=network-online.target
 
 [Service]
-<% if user && !user.empty? && group && !group.empty? %>
 User=<%= user %>
 Group=<%= group %>
-<% end %>
 Type=simple
 Restart=always
 RestartSec=10
-ExecStart=/usr/bin/ruby <%= app_dir %>/lib/main.rb <%= ssh_dir %>
+ExecStart=<%= ruby %> <%= app_dir %>/lib/main.rb <%= ssh_dir %>
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=<%= capabilities %>
+ProtectSystem=strict
+ProtectHome=<%= under_home ? 'read-only' : 'yes' %>
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
 
 [Install]
-WantedBy = multi-user.target
+WantedBy=multi-user.target

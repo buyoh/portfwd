@@ -29,14 +29,14 @@ describe 'install.sh' do
     File.write(File.join(@srcdir, path), content)
   end
 
-  def run_install
+  def run_install(extra_env = {})
     env = {
       'ARG_USE_SUDO' => 'false',
       'ARG_USE_ANOTHER_USER' => 'false',
       'ARG_ALWAYS_YES' => 'true',
       'ARG_INSTALL_SYSTEMD' => 'false',
       'ARG_APPDIR' => @appdir
-    }
+    }.merge(extra_env)
     # install.sh must be invoked by absolute path (see code review 08)
     _out, status = Open3.capture2e(env, 'bash', File.join(@srcdir, 'install.sh'))
     status
@@ -109,6 +109,13 @@ describe 'install.sh' do
 
     assert(!run_install.success?)
     assert(File.exist?(app_path('.ssh', 'config')))
+  end
+
+  it 'should fail before installing when the runtime ruby does not exist' do
+    status = run_install('ARG_INSTALL_SYSTEMD' => 'true', 'ARG_RUBY' => File.join(@tmpdir, 'no-ruby'))
+
+    assert(!status.success?)
+    assert(!File.exist?(@appdir))
   end
 
   it 'should clean up staging directories on failure' do
