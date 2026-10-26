@@ -37,13 +37,15 @@ class NodeManager
   attr_reader :nodes
 
   # Validate the nodes and return the sorted nodes
+  # - Check if the hosts are unique
+  # - Check if the connected nodes are registered
   # - Check if there is a start node
   # - Check if no cycle
   # - Return the sorted nodes (topological sort) if no error
-  def vaidate_nodes
+  def validate_nodes
     return @sorted_nodes if @sorted_nodes
 
-    ok, err = check_unique_host
+    err = check_unique_host || check_registered_nodes
     if err
       @logger.error(err)
       return nil
@@ -65,11 +67,24 @@ class NodeManager
 
   private
 
+  # Returns an error message, or nil
   def check_unique_host
     @nodes.map { |n| n.host }.tally.each do |host, count|
-      return [false, "Duplicate host: #{host}"] if count > 1
+      return "Duplicate host: #{host}" if count > 1
     end
-    [true, nil]
+    nil
+  end
+
+  # Returns an error message, or nil.
+  # A node connected by `then` but not in the list would be reported as a cycle by the topological sort
+  def check_registered_nodes
+    registered = @nodes.to_h { |n| [n, true] }.compare_by_identity
+    @nodes.each do |node|
+      (node.after_nodes + node.before_nodes).each do |other|
+        return "Node is not registered: #{other.host} (connected with #{node.host})" unless registered.key?(other)
+      end
+    end
+    nil
   end
 
   def calc_topological_sort

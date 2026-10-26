@@ -15,17 +15,17 @@ describe 'Platform' do
     @platform.terminate
   end
 
-  it 'should work `is_alive_child_process`' do
+  it 'should work `child_process_alive?`' do
     @platform.add_ssh_host_to_tcp_host_for_test('host0', 'tcp0', 8000)
 
     pid = @platform.start_child_process_ssh('host0', 'fixtures/ssh_config')
     assert(pid)
-    assert(@platform.is_alive_child_process(pid))
+    assert(@platform.child_process_alive?(pid))
 
     @platform.kill_child_process(pid)
     alive = true
     9.times do
-      unless @platform.is_alive_child_process(pid)
+      unless @platform.child_process_alive?(pid)
         alive = false
         break
       end
@@ -41,7 +41,7 @@ describe 'Platform' do
 
     pid = @platform.start_child_process_ssh('host0', 'fixtures/ssh_config')
     assert(pid)
-    assert(@platform.is_alive_child_process(pid))
+    assert(@platform.child_process_alive?(pid))
 
     assert(@platform.wait_tcp_port_is_open('tcp0', 8000, pid))
     assert(@platform.wait_tcp_port_is_open('tcp0', 8001, pid))
@@ -54,7 +54,7 @@ describe 'Platform' do
     @platform.kill_child_process(pid)
     alive = true
     9.times do
-      unless @platform.is_alive_child_process(pid)
+      unless @platform.child_process_alive?(pid)
         alive = false
         break
       end

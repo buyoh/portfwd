@@ -1,8 +1,12 @@
-# Fake ssh command for PlatformImpl tests. Arguments are ignored.
+# Fake ssh command for PlatformImpl tests. Arguments are ignored except for the log.
+#   FAKE_SSH_ARGS_LOG=<path>   write the arguments to <path>, one per line
 #   FAKE_SSH_IGNORE_TERM=1     ignore SIGTERM
 #   FAKE_SSH_EXIT_AFTER=<sec>  exit by itself after <sec> seconds
 #   FAKE_SSH_SIGNAL_LOG=<path> append received signal names to <path>
 #   FAKE_SSH_READY_FILE=<path> create <path> after signal handlers are installed
+
+args_log_path = ENV['FAKE_SSH_ARGS_LOG']
+File.write(args_log_path, ARGV.map { |arg| "#{arg}\n" }.join) if args_log_path
 
 log_path = ENV['FAKE_SSH_SIGNAL_LOG']
 log_signal = ->(name) { File.open(log_path, 'a') { |f| f.puts(name) } if log_path }

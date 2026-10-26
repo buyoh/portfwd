@@ -1,5 +1,6 @@
 require 'minitest/autorun'
 require 'logger'
+require 'stringio'
 
 require_relative '../lib/node'
 
@@ -18,7 +19,7 @@ describe 'Node' do
     nodes = [node0, node1, node2, node3].reverse
 
     node_manager = NodeManager.new(@logger, nodes)
-    sorted_nodes = node_manager.vaidate_nodes
+    sorted_nodes = node_manager.validate_nodes
     assert(!sorted_nodes.nil?)
 
     ranks = %w[host0 host1 host2 host3].map { |host| sorted_nodes.find_index { |node| node.host == host } }
@@ -41,7 +42,7 @@ describe 'Node' do
     nodes = [node0, node1, node2, node3].reverse
 
     node_manager = NodeManager.new(@logger, nodes)
-    sorted_nodes = node_manager.vaidate_nodes
+    sorted_nodes = node_manager.validate_nodes
     assert(sorted_nodes.nil?)
   end
 
@@ -55,7 +56,7 @@ describe 'Node' do
     nodes = [node0, node1, node2, node3].reverse
 
     node_manager = NodeManager.new(@logger, nodes)
-    sorted_nodes = node_manager.vaidate_nodes
+    sorted_nodes = node_manager.validate_nodes
     assert(sorted_nodes.nil?)
   end
 
@@ -69,12 +70,35 @@ describe 'Node' do
     nodes = [node0, node1, node2, node3].reverse
 
     node_manager = NodeManager.new(@logger, nodes)
-    sorted_nodes = node_manager.vaidate_nodes
+    sorted_nodes = node_manager.validate_nodes
     assert(!sorted_nodes.nil?)
 
     invalidated_hosts = ['host1']
     invalidated_nodes = node_manager.solve_invalidated_nodes(invalidated_hosts)
     assert(invalidated_nodes.length == 3)
     assert(invalidated_nodes.map(&:host).include?('host0') == false)
+  end
+
+  it 'should report a node connected by `then` but not registered' do
+    log = StringIO.new
+    node0 = Node.new({ host: 'host0' })
+    node1 = Node.new({ host: 'host1' })
+    node0.then(node1)
+
+    node_manager = NodeManager.new(Logger.new(log), [node0])
+    assert_nil(node_manager.validate_nodes)
+    assert_includes(log.string, 'Node is not registered: host1 (connected with host0)')
+    refute_includes(log.string, 'Cycle detected')
+  end
+
+  it 'should report a registered node connected from a node not registered' do
+    log = StringIO.new
+    node0 = Node.new({ host: 'host0' })
+    node1 = Node.new({ host: 'host1' })
+    node0.then(node1)
+
+    node_manager = NodeManager.new(Logger.new(log), [node1])
+    assert_nil(node_manager.validate_nodes)
+    assert_includes(log.string, 'Node is not registered: host0 (connected with host1)')
   end
 end

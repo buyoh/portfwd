@@ -1,7 +1,9 @@
 require 'socket'
-require 'timeout'
 
 class PlatformImpl
+  # timeout of each of name resolution and connect in check_pid_and_tcp_port_is_open
+  TCP_TIMEOUT_SEC = 1
+
   def initialize(logger, ssh_command: ['ssh'], kill_timeout_sec: 5)
     @logger = logger
     @ssh_command = ssh_command
@@ -32,7 +34,8 @@ class PlatformImpl
 
   def start_child_process_ssh(host, ssh_config_filepath)
     @logger.debug("start_child_process_ssh host=#{host}")
-    pid = spawn(*@ssh_command, '-N', '-F', ssh_config_filepath, host, pgroup: true)
+    # `--`: host is not an option even if it starts with '-'
+    pid = spawn(*@ssh_command, '-N', '-F', ssh_config_filepath, '--', host, pgroup: true)
     @children_mutex.synchronize { @children[pid] = true }
     pid
   rescue SystemCallError => e
@@ -40,7 +43,7 @@ class PlatformImpl
     nil
   end
 
-  def is_alive_child_process(pid)
+  def child_process_alive?(pid)
     return false unless child?(pid)
 
     return true if Process.waitpid2(pid, Process::WNOHANG).nil?
@@ -75,20 +78,14 @@ class PlatformImpl
 
   def check_pid_and_tcp_port_is_open(ip, port, pid)
     @logger.debug("check_pid_and_tcp_port_is_open ip=#{ip}, port=#{port}")
-    # process is dead. Checked outside of Timeout not to be interrupted between reaping and forgetting the pid
-    return false if pid && !is_alive_child_process(pid)
+    # process is dead
+    return false if pid && !child_process_alive?(pid)
 
-    begin
-      Timeout.timeout(1) do
-        s = TCPSocket.new(ip, port)
-        s.close
-        return true
-      rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH
-        return false
-      end
-    rescue Timeout::Error
-    rescue SystemCallError
-    end
+    TCPSocket.new(ip, port, resolv_timeout: TCP_TIMEOUT_SEC, connect_timeout: TCP_TIMEOUT_SEC).close
+    true
+  rescue SystemCallError, SocketError, IOError => e
+    # IOError: IO::TimeoutError by the timeouts
+    @logger.debug("#{ip}:#{port} is not open: #{e.class}: #{e.message}")
     false
   end
 
@@ -166,7 +163,7 @@ class PlatformStub
     pid
   end
 
-  def is_alive_child_process(pid)
+  def child_process_alive?(pid)
     @started_pid_to_ssh_host.key?(pid)
   end
 
@@ -179,7 +176,7 @@ class PlatformStub
   end
 
   def check_pid_and_tcp_port_is_open(ip, port, pid)
-    return false unless is_alive_child_process(pid)
+    return false unless child_process_alive?(pid)
 
     tcp_host = [ip, port]
 

@@ -1,5 +1,8 @@
 class App
   class NodeProcessObserver
+    # tries (a few seconds each at most) until a port of check_tcps is connected to
+    CONNECTION_TRY_COUNT = 10
+
     def initialize(logger, platform, host, check_tcps)
       @logger = logger
       @platform = platform
@@ -7,6 +10,8 @@ class App
       @check_tcps = check_tcps
       @pid = nil
     end
+
+    attr_reader :host
 
     def initialized?
       !@pid.nil?
@@ -19,9 +24,9 @@ class App
         return false
       end
 
-      wait_ok, check_tcp = wait_connection
-      unless wait_ok
-        @logger.error("Failed to connect to #{check_tcp[:host]}:#{check_tcp[:port]}")
+      check_tcp = failed_check_tcp
+      if check_tcp
+        @logger.error("Failed to connect to #{check_tcp[:host]}:#{check_tcp[:port]} of #{@host}")
         @platform.kill_child_process(@pid)
         @pid = nil
         return false
@@ -33,34 +38,22 @@ class App
     def terminate
       return unless @pid
 
-      @platform.kill_child_process(@pid) if @platform.is_alive_child_process(@pid)
+      @platform.kill_child_process(@pid) if @platform.child_process_alive?(@pid)
     ensure
       @pid = nil
     end
 
-    def wait_connection
-      @check_tcps.each do |check_tcp|
-        tcp_host = check_tcp[:host]
-        tcp_port = check_tcp[:port]
-        try_count = 10
-        return [false, check_tcp] unless @platform.wait_tcp_port_is_open(tcp_host, tcp_port, @pid, try_count)
+    # Returns the first check_tcp which cannot be connected to, or nil if all of them can
+    def failed_check_tcp
+      @check_tcps.find do |check_tcp|
+        !@platform.wait_tcp_port_is_open(check_tcp[:host], check_tcp[:port], @pid, CONNECTION_TRY_COUNT)
       end
-      [true, nil]
     end
 
-    def check_connection
-      @check_tcps.each do |check_tcp|
-        tcp_host = check_tcp[:host]
-        tcp_port = check_tcp[:port]
-        return [false, check_tcp] unless @platform.wait_tcp_port_is_open(tcp_host, tcp_port, @pid)
-      end
-      [true, nil]
-    end
-
-    def is_alive_child_process
+    def alive?
       return false unless @pid
 
-      @platform.is_alive_child_process(@pid)
+      @platform.child_process_alive?(@pid)
     end
   end
 
@@ -131,7 +124,7 @@ class App
 
     ssh_config_filepath = File.join(ssh_config_dir, 'config')
 
-    sorted_nodes = node_manager.vaidate_nodes
+    sorted_nodes = node_manager.validate_nodes
     unless sorted_nodes
       @logger.error('Failed to validate nodes')
 
@@ -184,7 +177,7 @@ class App
           while @running
             sleep @config.check_connection_interval_sec
 
-            unless are_all_nodes_connection_alive?(observers)
+            unless all_nodes_alive?(observers)
               @logger.info('Detected a node is down')
               break
             end
@@ -244,19 +237,19 @@ class App
     observers
   end
 
-  def are_all_nodes_connection_alive?(observers)
-    observers.all? { |observer| observer.is_alive_child_process && observer.check_connection }
-  end
+  def all_nodes_alive?(observers)
+    observers.all? do |observer|
+      unless observer.alive?
+        @logger.info("Process of #{observer.host} is not alive")
+        next false
+      end
 
-  def launch_node_blocking(info, ssh_config_filepath)
-    host = info[:host]
-    pid = @platform.start_child_process_ssh(host, ssh_config_filepath)
-
-    if info[:check_tcps].any? { |check_tcp| !@platform.wait_tcp_port_is_open(check_tcp[:host], check_tcp[:port], pid) }
-      # failed
-      @platform.kill_child_process(pid)
-      return nil
+      check_tcp = observer.failed_check_tcp
+      if check_tcp
+        @logger.info("Failed to connect to #{check_tcp[:host]}:#{check_tcp[:port]} of #{observer.host}")
+        next false
+      end
+      true
     end
-    pid
   end
 end

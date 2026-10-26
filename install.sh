@@ -50,6 +50,14 @@ if [[ "$ARG_APPDIR" != /* ]]; then
   echo "ARG_APPDIR must be an absolute path: '$ARG_APPDIR'"
   exit 1
 fi
+# the paths are embedded in the systemd unit and the ssh config without escaping:
+# a space splits ExecStart, '%' is a specifier of systemd, and a newline injects a directive
+for name in ARG_APPDIR ARG_RUBY; do
+  if [[ ! "${!name}" =~ ^/[A-Za-z0-9._/-]*$ ]]; then
+    echo "$name must be an absolute path of letters, digits, '.', '_', '/' and '-': '${!name}'"
+    exit 1
+  fi
+done
 # a trailing slash makes `test -L` follow a symbolic link
 while [[ "$ARG_APPDIR" == */ && "$ARG_APPDIR" != / ]]; do
   ARG_APPDIR=${ARG_APPDIR%/}
@@ -96,7 +104,7 @@ render_template() {
   local cmd=(ruby "$(dirname "$0")/tools/render_erb.rb" "$template_path" "$output_path"
     "app_dir=$ARG_APPDIR" "ssh_dir=$ARG_APPDIR/.ssh" "ruby=$ARG_RUBY")
   if [[ "$USE_SERVICE_USER" == true ]]; then
-    cmd+=("user=$ARG_USER" "group=nogroup")
+    cmd+=("user=$ARG_USER" "group=$SERVICE_GROUP")
   else
     cmd+=("user=root" "group=root")
   fi
@@ -109,24 +117,50 @@ render_template() {
 
 confirm() {
   local message="$1"
+  local answer
 
   echo "$message"
   if [[ "$ARG_ALWAYS_YES" == true ]]; then
     return
   fi
-  echo "Continue? (Y/n)"
-  read -r l_confirm
-  if [[ 'Y' != "$l_confirm" ]]; then
+  echo "Continue? (y/N)"
+  # EOF (e.g. no terminal) leaves answer empty, which is a "no".
+  # a last line without a newline makes read fail, but answer keeps it
+  read -r answer || true
+  if [[ ! "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]; then
     echo 'abort'
     exit 1
   fi
 }
 
+# prints SYS_UID_MAX of login.defs. Falls back to UID_MIN - 1 as useradd does, or 999
+sys_uid_max() {
+  local file value
+
+  for file in /etc/login.defs /usr/etc/login.defs; do
+    [[ -r "$file" ]] || continue
+    # decimal only: a leading zero would be octal for bash
+    value=$(sed -n 's/^[[:space:]]*SYS_UID_MAX[[:space:]][[:space:]]*\([1-9][0-9]*\)[[:space:]]*$/\1/p' "$file" | tail -n 1)
+    if [[ -n "$value" ]]; then
+      echo "$value"
+      return
+    fi
+    value=$(sed -n 's/^[[:space:]]*UID_MIN[[:space:]][[:space:]]*\([1-9][0-9]*\)[[:space:]]*$/\1/p' "$file" | tail -n 1)
+    if [[ -n "$value" ]]; then
+      echo $((value - 1))
+      return
+    fi
+    break
+  done
+  echo 999
+}
+
+# the primary group of ARG_USER. Set after the user is created
+SERVICE_GROUP=
 # owner options for `install`. Omitted when the files are owned by the invoking user (root, or the tester)
 SSH_OWNER_OPTS=()
 CODE_OWNER_OPTS=()
 if [[ "$USE_SERVICE_USER" == true ]]; then
-  SSH_OWNER_OPTS=(-o "$ARG_USER" -g nogroup)
   CODE_OWNER_OPTS=(-o root -g root)
 fi
 
@@ -151,7 +185,7 @@ render_ssh_config() {
   render_template ".ssh/config.erb" "$dest_dir/config"
   $WRAP_SUDO chmod 600 "$dest_dir/config"
   if [[ "$USE_SERVICE_USER" == true ]]; then
-    $WRAP_SUDO chown "$ARG_USER":nogroup "$dest_dir/config"
+    $WRAP_SUDO chown "$ARG_USER:$SERVICE_GROUP" "$dest_dir/config"
   fi
 }
 
@@ -263,6 +297,12 @@ if [[ "$ARG_FILES_ONLY_FOR_TEST" != true ]] && ! "$ARG_RUBY" -ryaml -e '' > /dev
   echo "ruby '$ARG_RUBY' cannot load yaml. Install libyaml for it"
   exit 1
 fi
+# the timeouts of TCPSocket.new used by the service
+if [[ "$ARG_FILES_ONLY_FOR_TEST" != true ]] \
+  && ! "$ARG_RUBY" -e 'exit(Gem::Version.new(RUBY_VERSION) >= Gem::Version.new("3.0"))' > /dev/null 2>&1; then
+  echo "ruby '$ARG_RUBY' is older than 3.0, which the service requires"
+  exit 1
+fi
 
 # evaluate config.rb with the invoker's privilege (no sudo) before modifying anything.
 # config.rb is not installed and is never evaluated by the service.
@@ -275,6 +315,30 @@ if ! ruby tools/generate_config.rb .ssh/config.rb "$TMP_CONFIG_YML" \
   || ! ruby -r ./lib/node_config -e 'NodeConfig.parse_file(ARGV[0])' "$TMP_CONFIG_YML"; then
   echo "Failed to generate config.yml from '.ssh/config.rb'"
   exit 1
+fi
+
+# an existing user owns the private key and runs the service. Created after the confirmation otherwise
+SERVICE_USER_NOT_SYSTEM=false
+if [[ "$USE_SERVICE_USER" == true ]]; then
+  if l_uid=$(id -u "$ARG_USER" 2> /dev/null); then
+    if ! l_group=$(id -gn "$ARG_USER" 2> /dev/null); then
+      echo "The primary group of '$ARG_USER' has no name. Fix the user or use another ARG_USER"
+      exit 1
+    fi
+    echo "Service user: $ARG_USER (uid $l_uid, group $l_group)"
+    if [[ "$l_uid" == 0 ]]; then
+      echo "ARG_USER '$ARG_USER' is root. Use ARG_USE_ROOT=true to run the service as root"
+      exit 1
+    fi
+    if ((l_uid > $(sys_uid_max))); then
+      SERVICE_USER_NOT_SYSTEM=true
+    fi
+  elif getent group "$ARG_USER" > /dev/null; then
+    # useradd -U fails
+    echo "User '$ARG_USER' does not exist, but group '$ARG_USER' exists"
+    echo "Create the user with the group (useradd --system -g '$ARG_USER' ...), or use another ARG_USER"
+    exit 1
+  fi
 fi
 
 check_appdir
@@ -292,11 +356,18 @@ if [[ "$ARG_USE_ROOT" == true && "$ARG_FILES_ONLY_FOR_TEST" != true ]]; then
   confirm "WARNING: The service will run as root (ARG_USE_ROOT=true)."
 fi
 
+if [[ "$SERVICE_USER_NOT_SYSTEM" == true ]]; then
+  confirm "WARNING: '$ARG_USER' is not a system user. It will own the private key and run the service."
+fi
+
 if [[ "$USE_SERVICE_USER" == true ]]; then
-  if ! id "$ARG_USER" > /dev/null; then
+  if ! id "$ARG_USER" > /dev/null 2>&1; then
     echo "User '$ARG_USER' does not exist. Create"
-    $WRAP_SUDO useradd --system -g nogroup -M -d /nonexistent -s /usr/sbin/nologin "$ARG_USER"
+    # -U: a group of the same name. nogroup does not exist on some distributions
+    $WRAP_SUDO useradd --system -U -M -d /nonexistent -s /usr/sbin/nologin "$ARG_USER"
   fi
+  SERVICE_GROUP=$(id -gn "$ARG_USER")
+  SSH_OWNER_OPTS=(-o "$ARG_USER" -g "$SERVICE_GROUP")
 fi
 
 TMP_UNIT_FILE=

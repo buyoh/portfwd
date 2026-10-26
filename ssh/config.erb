@@ -4,7 +4,10 @@ Host portfwd
     Port 10022
     IdentityFile <%= ssh_dir %>/id_rsa
 
+    # the remote server can reach this machine's sshd at its port 20022
     RemoteForward 20022 localhost:22
+    # opened after the connection is established. Checked by check_tcps of config.rb
+    LocalForward 20080 localhost:20022
     ExitOnForwardFailure yes
 
     # StrictHostKeyChecking no
@@ -19,7 +22,9 @@ Host portfwd2
     Port 10033
     IdentityFile <%= ssh_dir %>/id_rsa
 
-    RemoteForward 20022 localhost:22
+    # a port different from portfwd: both may connect to the same server
+    RemoteForward 20023 localhost:22
+    LocalForward 20088 localhost:20023
     ExitOnForwardFailure yes
 
     # StrictHostKeyChecking no

@@ -14,6 +14,24 @@ After changing `config.rb`, rerun `install.sh` (or `tools/generate_config.rb` fo
 
 The host names in `config.rb` (`host` of `p_conn`) must match `[A-Za-z0-9][A-Za-z0-9_-]*`, and `p_conn` accepts only the keys `host` and `check_tcps`.
 
+`check_tcps` lists the TCP ports on this machine which can be connected to while the connection is up. The service checks them after starting ssh and periodically, and restarts the connections if any of them is closed. Usually they are the `LocalForward` ports of the Host. See the comments in `ssh/config.rb`.
+
+## Requirements
+
+- Linux with systemd
+- The ruby given by `ARG_RUBY` (3.0 or later, able to load yaml). `install.sh` checks both
+- `install.sh` also runs other ruby: the `ruby` in the invoker's `PATH` evaluates `config.rb`, and the `ruby` in the `secure_path` of sudo renders the templates (a ruby of rbenv and so on is not found by sudo)
+- OpenSSH client
+- `sudo` (unless running as root) and `useradd`
+
+## Service user
+
+Unless `ARG_USE_ROOT=true`, the service runs as `ARG_USER`, which owns the files under `.ssh`.
+
+- A new user is created by `useradd --system -U`, with a group of the same name.
+- An existing user is used with its primary group. `install.sh` refuses root, and asks for a confirmation if it is not a system user (its UID is larger than `SYS_UID_MAX` of `/etc/login.defs`).
+- If the user does not exist but a group of the same name does, `install.sh` aborts, since `useradd -U` fails. Create the user with the group, or use another `ARG_USER`.
+
 ## Install options
 
 `install.sh` reads the following environment variables.
@@ -22,9 +40,9 @@ The host names in `config.rb` (`host` of `p_conn`) must match `[A-Za-z0-9][A-Za-
 |---|---|---|
 | `ARG_USE_ROOT` | `false` | `true` runs the service as root instead of a dedicated user |
 | `ARG_USER` | `mai-portfwd` | The dedicated user that runs the service. Created if missing. Letters, digits, `.`, `_` and `-` (not starting with `-`, `.` or a digit), optionally ending with `$`. Cannot be used with `ARG_USE_ROOT=true` |
-| `ARG_APPDIR` | `/opt/mai-portfwd` | Install destination. An absolute path, not a symbolic link. Must be absent, empty, or a directory installed by `install.sh` |
+| `ARG_APPDIR` | `/opt/mai-portfwd` | Install destination. An absolute path of letters, digits, `.`, `_`, `/` and `-`, not a symbolic link. Must be absent, empty, or a directory installed by `install.sh` |
 | `ARG_ALWAYS_YES` | `false` | `true` skips the confirmation prompts |
-| `ARG_RUBY` | `/usr/bin/ruby` | The ruby the service runs with |
+| `ARG_RUBY` | `/usr/bin/ruby` | The ruby the service runs with. An absolute path of letters, digits, `.`, `_`, `/` and `-` |
 | `ARG_FILES_ONLY_FOR_TEST` | `false` | For tests only. Deploys the files as the current user, and skips sudo, user creation, ownership and systemd |
 
 `sudo` is used automatically unless `install.sh` runs as root.
@@ -39,6 +57,18 @@ The following variables were removed. `install.sh` aborts if any of them is set,
 | `ARG_USE_CURRENT_DIR` | None. See "Run from the working copy" |
 | `ARG_INSTALL_SYSTEMD=false` | `ARG_FILES_ONLY_FOR_TEST=true` (for tests only) |
 | `ARG_STARTUP_CHECK_SEC` | None. The startup check waits 20 seconds |
+
+The systemd unit is named `portfwd`, so only one copy can be installed on a host. Running `install.sh` again with another `ARG_APPDIR` switches the service to it, and leaves the previous `ARG_APPDIR`.
+
+## Uninstall
+
+```sh
+sudo systemctl disable --now portfwd
+sudo rm /etc/systemd/system/portfwd.service
+sudo systemctl daemon-reload
+sudo rm -rf /opt/mai-portfwd  # ARG_APPDIR
+sudo userdel mai-portfwd      # ARG_USER. Only if it was created by install.sh. Its group is removed too if it has no other members
+```
 
 ## Installed version
 

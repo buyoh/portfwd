@@ -1,5 +1,6 @@
 require 'minitest/autorun'
 require 'logger'
+require 'stringio'
 require 'rbconfig'
 require 'tmpdir'
 
@@ -50,7 +51,17 @@ describe 'PlatformImpl' do
 
     pid = platform.start_child_process_ssh('host0', 'config')
     assert(pid)
-    assert(platform.is_alive_child_process(pid))
+    assert(platform.child_process_alive?(pid))
+  end
+
+  it 'should pass the host after `--`' do
+    args_path = File.join(@tmpdir, 'args')
+    platform = new_platform('FAKE_SSH_ARGS_LOG' => args_path)
+    @platforms << platform
+
+    platform.start_child_process_ssh('host0', 'config')
+    assert(wait_until(10) { File.exist?(args_path) && File.read(args_path).end_with?("\n") })
+    assert_equal(%w[-N -F config -- host0], File.readlines(args_path, chomp: true))
   end
 
   it 'should stop a child by TERM and reap it' do
@@ -65,7 +76,7 @@ describe 'PlatformImpl' do
     platform.kill_child_process(pid)
 
     assert(reaped?(pid))
-    assert(!platform.is_alive_child_process(pid))
+    assert(!platform.child_process_alive?(pid))
     assert_equal(['TERM'], File.readlines(log_path, chomp: true))
   end
 
@@ -89,7 +100,7 @@ describe 'PlatformImpl' do
     @platforms << platform
 
     pid = platform.start_child_process_ssh('host0', 'config')
-    assert(wait_until { !platform.is_alive_child_process(pid) })
+    assert(wait_until { !platform.child_process_alive?(pid) })
     assert(reaped?(pid))
   end
 
@@ -101,7 +112,7 @@ describe 'PlatformImpl' do
     original_kill = Process.method(:kill)
     Process.define_singleton_method(:kill) { |*args| killed << args }
     begin
-      assert(!platform.is_alive_child_process(Process.ppid))
+      assert(!platform.child_process_alive?(Process.ppid))
       platform.kill_child_process(Process.ppid)
     ensure
       Process.define_singleton_method(:kill, original_kill)
@@ -137,5 +148,32 @@ describe 'PlatformImpl' do
     assert(reaped?(pid))
   ensure
     server&.close
+  end
+
+  describe 'check_pid_and_tcp_port_is_open' do
+    before do
+      @log = StringIO.new
+      @logger = Logger.new(@log, level: Logger::DEBUG)
+    end
+
+    it 'should return true for an open port and false for a closed port' do
+      platform = new_platform
+      @platforms << platform
+      server = TCPServer.new('127.0.0.1', 0)
+      port = server.addr[1]
+
+      assert(platform.check_pid_and_tcp_port_is_open('127.0.0.1', port, nil))
+      server.close
+      assert(!platform.check_pid_and_tcp_port_is_open('127.0.0.1', port, nil))
+      assert_includes(@log.string, "127.0.0.1:#{port} is not open")
+    end
+
+    it 'should return false and log the reason for a host which cannot be resolved' do
+      platform = new_platform
+      @platforms << platform
+
+      assert(!platform.check_pid_and_tcp_port_is_open('portfwd-test.invalid', 1, nil))
+      assert_includes(@log.string, 'portfwd-test.invalid:1 is not open')
+    end
   end
 end

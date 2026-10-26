@@ -3,6 +3,7 @@ require 'fileutils'
 require 'open3'
 require 'rbconfig'
 require 'tmpdir'
+require 'etc'
 
 require_relative '../lib/node_config'
 
@@ -55,8 +56,10 @@ describe 'install.sh' do
   end
 
   # a sudo that runs the read-only check of install.sh (`sh -c`), and logs and fails anything else.
-  # check: :run runs the check, :fail fails it as when the authentication fails, :garbage prints an unexpected output
-  def install_fake_sudo(check: :run)
+  # check: :run runs the check, :fail fails it as when the authentication fails, :garbage prints an unexpected output.
+  # pass: true logs and succeeds without running anything, except a command with a path under /etc, which fails.
+  #   install.sh stops at installing the unit
+  def install_fake_sudo(check: :run, pass: false)
     bindir = File.join(@tmpdir, 'bin')
     FileUtils.mkdir_p(bindir)
     path = File.join(bindir, 'sudo')
@@ -72,13 +75,21 @@ describe 'install.sh' do
         exec "$@"
       fi
       echo "$*" >> "$FAKE_SUDO_LOG"
+      if [ "$FAKE_SUDO_PASS" = 1 ]; then
+        for arg in "$@"; do
+          case "$arg" in
+            /etc/*) exit 1 ;;
+          esac
+        done
+        exit 0
+      fi
       exit 1
     SH
     File.chmod(0o755, path)
     @sudo_log = File.join(@tmpdir, 'sudo.log')
     @sudo_check_log = File.join(@tmpdir, 'sudo_check.log')
     { 'PATH' => "#{bindir}:#{ENV.fetch('PATH')}", 'FAKE_SUDO_LOG' => @sudo_log,
-      'FAKE_SUDO_CHECK_LOG' => @sudo_check_log, 'FAKE_SUDO_CHECK' => check.to_s }
+      'FAKE_SUDO_CHECK_LOG' => @sudo_check_log, 'FAKE_SUDO_CHECK' => check.to_s, 'FAKE_SUDO_PASS' => pass ? '1' : '0' }
   end
 
   def read_log(path)
@@ -95,8 +106,37 @@ describe 'install.sh' do
   end
 
   # normal mode (no ARG_FILES_ONLY_FOR_TEST) with the fake sudo, and a runtime ruby that exists on any host
-  def normal_mode_env(check: :run)
-    install_fake_sudo(check: check).merge('ARG_FILES_ONLY_FOR_TEST' => nil, 'ARG_RUBY' => RbConfig.ruby)
+  def normal_mode_env(check: :run, pass: false)
+    install_fake_sudo(check: check, pass: pass).merge('ARG_FILES_ONLY_FOR_TEST' => nil, 'ARG_RUBY' => RbConfig.ruby)
+  end
+
+  # SYS_UID_MAX as install.sh reads it
+  def sys_uid_max
+    path = ['/etc/login.defs', '/usr/etc/login.defs'].find { |p| File.readable?(p) }
+    return 999 unless path
+
+    lines = File.readlines(path)
+    find = ->(key) { lines.filter_map { |l| l[/\A\s*#{key}\s+([1-9][0-9]*)\s*\z/, 1] }.last }
+    max = find.call('SYS_UID_MAX')
+    return max.to_i if max
+
+    min = find.call('UID_MIN')
+    min ? min.to_i - 1 : 999
+  end
+
+  def user_exists?(name)
+    Etc.getpwnam(name)
+    true
+  rescue ArgumentError
+    false
+  end
+
+  # an executable which runs as ruby for the checks of install.sh
+  def write_fake_ruby(name, script)
+    path = File.join(@tmpdir, name)
+    File.write(path, "#!/bin/sh\n#{script}\n")
+    File.chmod(0o755, path)
+    path
   end
 
   def git(*args)
@@ -338,6 +378,49 @@ describe 'install.sh' do
     end
   end
 
+  describe 'confirmation' do
+    def run_with_answer(stdin)
+      run_install_with_output({ 'ARG_ALWAYS_YES' => nil }, stdin: stdin)
+    end
+
+    ["y\n", "Y\n", "yes\n", "YES\n", 'y'].each do |answer|
+      it "should continue by #{answer.inspect}" do
+        status, out = run_with_answer(answer)
+        assert(status.success?, out)
+        assert_includes(out, 'Continue? (y/N)')
+      end
+    end
+
+    ["\n", "n\n", "N\n", "yy\n", ''].each do |answer|
+      it "should abort by #{answer.inspect}" do
+        status, out = run_with_answer(answer)
+        assert(!status.success?)
+        assert_includes(out, 'abort')
+        assert(!File.exist?(@appdir))
+      end
+    end
+  end
+
+  describe 'paths embedded in templates' do
+    ["a b", "a%i", "a\nExecStartPre=/bin/false", "a$b"].each do |name|
+      it "should reject ARG_APPDIR with #{name.inspect}" do
+        status, out = run_install_with_output({ 'ARG_APPDIR' => File.join(@tmpdir, name) })
+        assert(!status.success?)
+        assert_includes(out, 'ARG_APPDIR must be an absolute path of letters')
+        assert_empty(Dir.children(@tmpdir).reject { |child| %w[src].include?(child) })
+      end
+    end
+
+    ['/usr/bin/ruby x', '/usr/bin/ruby%i'].each do |ruby|
+      it "should reject ARG_RUBY #{ruby.inspect}" do
+        status, out = run_install_with_output({ 'ARG_RUBY' => ruby })
+        assert(!status.success?)
+        assert_includes(out, 'ARG_RUBY must be an absolute path of letters')
+        assert(!File.exist?(@appdir))
+      end
+    end
+  end
+
   describe 'test mode' do
     it 'should not call sudo' do
       status, out = run_install_with_output(install_fake_sudo)
@@ -385,7 +468,76 @@ describe 'install.sh' do
     it 'should set the owner to the service user' do
       env = normal_mode_env.merge('ARG_USER' => 'portfwd-test-nonexistent')
       assert(!run_install(env).success?)
-      assert_match(/\Auseradd .*portfwd-test-nonexistent\z/, sudo_calls.first)
+      assert_match(/\Auseradd --system -U .*portfwd-test-nonexistent\z/, sudo_calls.first)
+      refute_includes(sudo_calls.first, 'nogroup')
+    end
+
+    it 'should refuse root as ARG_USER' do
+      status, out = run_install_with_output(normal_mode_env.merge('ARG_USER' => 'root'))
+      assert(!status.success?)
+      assert_includes(out, 'ARG_USE_ROOT=true')
+      assert_empty(sudo_calls)
+      assert_empty(sudo_check_calls)
+    end
+
+    it 'should refuse a new user with an existing group of the same name' do
+      group = nil
+      Etc.group do |g|
+        if g.name.match?(/\A[a-z_][a-z0-9_-]*\z/) && !user_exists?(g.name)
+          group = g.name
+          break
+        end
+      end
+      skip 'no group without a user of the same name' unless group
+
+      status, out = run_install_with_output(normal_mode_env.merge('ARG_USER' => group))
+      assert(!status.success?, out)
+      assert_includes(out, "group '#{group}' exists")
+      assert_empty(sudo_calls)
+      assert_empty(sudo_check_calls)
+    end
+
+    it 'should warn about an existing user which is not a system user' do
+      skip 'the invoker is a system user' if Process.uid <= sys_uid_max
+      user = Etc.getpwuid(Process.uid).name
+      env = normal_mode_env.merge('ARG_USER' => user, 'ARG_ALWAYS_YES' => nil)
+      # answers only the first confirmation
+      status, out = run_install_with_output(env, stdin: "y\n")
+      assert(!status.success?)
+      assert_includes(out, "Service user: #{user} (uid #{Process.uid}")
+      assert_includes(out, 'WARNING:')
+      assert_includes(out, 'not a system user')
+      assert_includes(out, 'abort')
+      assert_empty(sudo_calls)
+    end
+
+    it 'should use the primary group of the service user' do
+      skip 'the invoker is a system user' if Process.uid <= sys_uid_max
+      user = Etc.getpwuid(Process.uid).name
+      group = Etc.getgrgid(Process.gid).name
+      status, out = run_install_with_output(normal_mode_env(pass: true).merge('ARG_USER' => user))
+      # stops at installing the unit into /etc
+      assert(!status.success?, out)
+      assert(sudo_calls.any? { |call| call.include?('/etc/systemd/system/portfwd.service') }, sudo_calls.join("\n"))
+
+      ssh_calls = sudo_calls.select { |call| call.include?('.ssh.new') }
+      refute_empty(ssh_calls)
+      assert(ssh_calls.grep(/\Ainstall /).all? { |call| call.include?("-o #{user} -g #{group} ") }, ssh_calls.join("\n"))
+      assert(ssh_calls.include?("chown #{user}:#{group} #{@appdir}/.ssh.new/config"), ssh_calls.join("\n"))
+      renders = sudo_calls.grep(/render_erb\.rb/)
+      assert_equal(2, renders.size, renders.join("\n"))
+      renders.each { |call| assert_includes(call, "group=#{group}") }
+      refute(sudo_calls.any? { |call| call.include?('nogroup') })
+    end
+
+    it 'should fail before installing when the runtime ruby is older than 3.0' do
+      old_ruby = write_fake_ruby('old-ruby', 'case "$*" in *RUBY_VERSION*) exit 1 ;; esac')
+      status, out = run_install_with_output(normal_mode_env.merge('ARG_RUBY' => old_ruby))
+      assert(!status.success?)
+      assert_includes(out, 'older than 3.0')
+      assert(!File.exist?(@appdir))
+      assert_empty(sudo_calls)
+      assert_empty(sudo_check_calls)
     end
 
     it 'should not set the owner with ARG_USE_ROOT=true' do

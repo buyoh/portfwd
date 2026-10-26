@@ -108,7 +108,7 @@ describe 'App' do
     assert(unknown_pids.empty?)
   end
 
-  it 'should call `check_connection` and `is_alive_child_process`' do
+  it 'should call `check_pid_and_tcp_port_is_open` and `child_process_alive?`' do
     host_to_pid = {}
     spy_on(@platform, :start_child_process_ssh) do |original, args|
       host, _ssh_config_filepath = args
@@ -117,10 +117,10 @@ describe 'App' do
       pid
     end
 
-    called_is_alive_child_process = Hash.new(0)
-    spy_on(@platform, :is_alive_child_process) do |original, args|
+    called_child_process_alive = Hash.new(0)
+    spy_on(@platform, :child_process_alive?) do |original, args|
       pid = args[0]
-      called_is_alive_child_process[pid] += 1
+      called_child_process_alive[pid] += 1
       original.call(*args)
     end
 
@@ -149,7 +149,7 @@ describe 'App' do
     assert(host_to_pid.size.positive?)
 
     host_to_pid.each do |_host, pid|
-      assert(called_is_alive_child_process[pid] > 0)
+      assert(called_child_process_alive[pid] > 0)
       assert(called_check_connection[pid] > 0)
     end
 
@@ -160,7 +160,7 @@ describe 'App' do
     assert(!unknown_ssh_hosts)
   end
 
-  it 'should restart nodes when `check_connection` return false' do
+  it 'should restart nodes when a process is dead' do
     pids = []
     spy_on(@platform, :start_child_process_ssh) do |original, args|
       pid = original.call(*args)
@@ -197,6 +197,38 @@ describe 'App' do
     assert((before_pids.sort & after_pids.sort).empty?)
   end
 
+  it 'should restart nodes when a port of check_tcps is closed while the process is alive' do
+    pids = []
+    spy_on(@platform, :start_child_process_ssh) do |original, args|
+      pid = original.call(*args)
+      pids << pid
+      pid
+    end
+    # closed for a single check
+    port_closed = false
+    spy_on(@platform, :check_pid_and_tcp_port_is_open) do |original, args|
+      ip, port, _pid = args
+      if port_closed && [ip, port] == ['tcp4', 8000]
+        port_closed = false
+        next false
+      end
+
+      original.call(*args)
+    end
+
+    assert(@app.start(@ssh_config_dir, @node_manager))
+    assert(wait_until { pids.size == 2 })
+    first_pids = pids.dup
+
+    port_closed = true
+    # the processes are alive. Only the port of host4 is closed. Both nodes are restarted
+    assert(wait_until { pids.size == 4 })
+    assert(first_pids.none? { |pid| @platform.child_process_alive?(pid) })
+    assert(pids.last(2).all? { |pid| @platform.child_process_alive?(pid) })
+    assert(@app.running?)
+    assert(!@app.failed?)
+  end
+
   def wait_until(timeout_sec = 3)
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout_sec
     until yield
@@ -221,7 +253,7 @@ describe 'App' do
     assert(wait_until { !@app.running? })
     assert(@app.failed?)
     assert_equal(1, launched_pids.size)
-    assert(!@platform.is_alive_child_process(launched_pids[0]))
+    assert(!@platform.child_process_alive?(launched_pids[0]))
   end
 
   it 'should report failure when launching nodes fails' do

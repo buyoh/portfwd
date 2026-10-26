@@ -24,7 +24,7 @@ logger = Logger.new($stderr)
 
 # checks duplicate hosts, the start node and cycles, as App does at runtime
 validate_nodes = lambda do |nodes|
-  exit 1 unless NodeManager.new(logger, nodes).vaidate_nodes
+  exit 1 unless NodeManager.new(logger, nodes).validate_nodes
 end
 
 begin
