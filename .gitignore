@@ -1,1 +1,6 @@
 /.ssh
+
+tmp/
+.tmp/
+local/
+.trash/
