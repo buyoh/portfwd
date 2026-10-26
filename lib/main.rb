@@ -3,17 +3,10 @@ require 'logger'
 require_relative 'app'
 require_relative 'platform'
 require_relative 'node'
+require_relative 'config_dsl'
 
-@logger = Logger.new(STDOUT)
-@logger.level = Logger::INFO # TODO: argument
-
-@nodes = []
-
-def p_conn(info)
-  node = Node.new(info)
-  @nodes.push(node)
-  node
-end
+logger = Logger.new(STDOUT)
+logger.level = Logger::INFO # TODO: argument
 
 # TODO: need?
 # nochdir: true, noclose: true
@@ -27,23 +20,28 @@ if ssh_config_dir.nil?
 end
 
 config_path = File.join(ssh_config_dir, 'config.rb')
-load config_path
+begin
+  nodes = ConfigDSL.load_file(config_path)
+rescue ConfigDSL::Error => e
+  logger.error(e.message)
+  exit 1
+end
 
-platform = PlatformImpl.new(@logger)
-node_manager = NodeManager.new(@logger, @nodes)
+platform = PlatformImpl.new(logger)
+node_manager = NodeManager.new(logger, nodes)
 
-app = App.new(@logger, platform)
+app = App.new(logger, platform)
 
 begin
   unless app.start(ssh_config_dir, node_manager)
-    @logger.error('Failed app')
+    logger.error('Failed app')
     exit 1
   end
 
   begin
     sleep 5 while app.running?
   rescue SignalException => e
-    @logger.info("Signal: #{e}")
+    logger.info("Signal: #{e}")
   end
 ensure
   app.terminate
@@ -51,8 +49,8 @@ ensure
 end
 
 if app.failed?
-  @logger.error('App failed')
+  logger.error('App failed')
   exit 1
 end
 
-@logger.info('Quit')
+logger.info('Quit')

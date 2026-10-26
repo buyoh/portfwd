@@ -1,6 +1,7 @@
 require 'minitest/autorun'
 require 'rbconfig'
 require 'tmpdir'
+require 'open3'
 
 MAIN_RB_PATH = File.expand_path('../lib/main.rb', __dir__)
 
@@ -25,6 +26,16 @@ describe 'main.rb' do
         flunk('main.rb did not exit (hang)')
       end
       assert_equal(1, status.exitstatus)
+    end
+  end
+
+  it 'should exit with 1 when config.rb is invalid' do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, 'config.rb'), "p_conn(host: 'portfwd'\n")
+
+      out, status = Open3.capture2e(RbConfig.ruby, MAIN_RB_PATH, dir)
+      assert_equal(1, status.exitstatus)
+      assert_includes(out, 'Failed to evaluate')
     end
   end
 end

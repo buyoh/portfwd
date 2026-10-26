@@ -240,4 +240,39 @@ describe 'App' do
     assert(!@app.running?)
     assert(!@app.failed?)
   end
+
+  it 'should use the default config' do
+    app = App.new(@logger, @platform)
+    assert_equal(30, app.config.check_connection_interval_sec)
+    assert_equal(10, app.config.terminate_sleep_sec)
+  end
+
+  it 'should accept App::Config by `update_config`' do
+    @app.update_config(App::Config.new(check_connection_interval_sec: 1, terminate_sleep_sec: 0))
+    assert_equal(1, @app.config.check_connection_interval_sec)
+    assert_equal(0, @app.config.terminate_sleep_sec)
+  end
+
+  it 'should reject an invalid config and keep the current config' do
+    before_config = @app.config
+    [
+      App::Config.new(check_connection_interval_sec: 0, terminate_sleep_sec: 1),
+      App::Config.new(check_connection_interval_sec: 1, terminate_sleep_sec: -1),
+      App::Config.new(check_connection_interval_sec: '1', terminate_sleep_sec: 1),
+      App::Config.new(check_connection_interval_sec: nil, terminate_sleep_sec: 1),
+      App::Config.new(check_connection_interval_sec: Float::INFINITY, terminate_sleep_sec: 1),
+      App::Config.new(check_connection_interval_sec: 1, terminate_sleep_sec: Float::NAN),
+      Object.new
+    ].each do |config|
+      assert_raises(ArgumentError) { @app.update_config(config) }
+    end
+    assert_equal(before_config, @app.config)
+  end
+
+  it 'should not be affected by changes to the given config object' do
+    config = App::Config.new(check_connection_interval_sec: 1, terminate_sleep_sec: 1)
+    @app.update_config(config)
+    config.check_connection_interval_sec = 0
+    assert_equal(1, @app.config.check_connection_interval_sec)
+  end
 end

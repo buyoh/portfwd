@@ -64,20 +64,52 @@ class App
     end
   end
 
+  Config = Struct.new(:check_connection_interval_sec, :terminate_sleep_sec, keyword_init: true) do
+    # Build a validated Config from any object which responds to the attributes.
+    # Raises ArgumentError for missing or invalid values.
+    def self.from(config)
+      values = members.to_h do |name|
+        raise ArgumentError, "config must respond to #{name}" unless config.respond_to?(name)
+
+        [name, config.public_send(name)]
+      end
+      new(**values).tap(&:validate!)
+    end
+
+    def validate!
+      unless finite_number?(check_connection_interval_sec) && check_connection_interval_sec.positive?
+        raise ArgumentError, "check_connection_interval_sec must be a positive number: #{check_connection_interval_sec.inspect}"
+      end
+      unless finite_number?(terminate_sleep_sec) && !terminate_sleep_sec.negative?
+        raise ArgumentError, "terminate_sleep_sec must be a non-negative number: #{terminate_sleep_sec.inspect}"
+      end
+
+      self
+    end
+
+    private
+
+    def finite_number?(value)
+      value.is_a?(Numeric) && value.finite?
+    end
+  end
+
+  DEFAULT_CONFIG = Config.new(check_connection_interval_sec: 30, terminate_sleep_sec: 10).freeze
+
   def initialize(logger, platform)
     @logger = logger
     @platform = platform
     @running = false
     @failed = false
     @app_thread = nil
-    @config = Struct.new(
-      :check_connection_interval_sec,
-      :terminate_sleep_sec
-    ).new(30, 10)
+    @config = DEFAULT_CONFIG
   end
 
+  attr_reader :config
+
+  # Raises ArgumentError if the config is invalid. The current config is kept in that case.
   def update_config(config)
-    @config = config
+    @config = Config.from(config).freeze
   end
 
   def running?
