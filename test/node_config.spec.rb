@@ -19,13 +19,13 @@ describe 'NodeConfig' do
     - host: portfwd
       check_tcps:
       - host: localhost
-        port: 8080
+        port: 20080
       then:
       - portfwd2
     - host: portfwd2
       check_tcps:
       - host: localhost
-        port: 8888
+        port: 20088
       then: []
   YAML
 
