@@ -16,6 +16,18 @@ The host names in `config.rb` (`host` of `p_conn`) must match `[A-Za-z0-9][A-Za-
 
 `check_tcps` lists the TCP ports on this machine which can be connected to while the connection is up. The service checks them after starting ssh and periodically, and restarts the connections if any of them is closed. Usually they are the `LocalForward` ports of the Host. See the comments in `ssh/config.rb`.
 
+## Register host keys
+
+The sample config uses `StrictHostKeyChecking yes` with `.ssh/known_hosts`, which is read-only for the service. `ssh/known_hosts` is empty, so register the host key of each server before running `install.sh`. Otherwise ssh fails with `Host key verification failed` and the service keeps restarting.
+
+```sh
+ssh-keyscan -p 10022 example.com > hostkey.tmp   # the Port and HostName of config.erb
+ssh-keygen -lf hostkey.tmp                       # compare the fingerprint with the one the server administrator gives you
+cat hostkey.tmp >> .ssh/known_hosts
+```
+
+Check the fingerprint through a trusted channel (for example, run `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server). Do not disable the verification with `StrictHostKeyChecking no` or `UserKnownHostsFile /dev/null`: that allows a man-in-the-middle attack.
+
 ## Requirements
 
 - Linux with systemd

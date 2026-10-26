@@ -10,9 +10,7 @@ Host portfwd
     LocalForward 20080 localhost:20022
     ExitOnForwardFailure yes
 
-    # StrictHostKeyChecking no
-    # UserKnownHostsFile /dev/null
-    # known_hosts is read-only for the service: register host keys in advance. accept-new does not save them
+    # known_hosts is read-only for the service: register host keys in advance (see README). accept-new does not save them
     StrictHostKeyChecking yes
     UserKnownHostsFile <%= ssh_dir %>/known_hosts
 
@@ -27,7 +25,5 @@ Host portfwd2
     LocalForward 20088 localhost:20023
     ExitOnForwardFailure yes
 
-    # StrictHostKeyChecking no
-    # UserKnownHostsFile /dev/null
     StrictHostKeyChecking yes
     UserKnownHostsFile <%= ssh_dir %>/known_hosts

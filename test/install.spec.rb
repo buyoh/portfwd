@@ -166,6 +166,13 @@ describe 'install.sh' do
     end
   end
 
+  it 'should work when invoked by a relative path from another directory' do
+    env = CLEARED_ENV.merge('ARG_ALWAYS_YES' => 'true', 'ARG_FILES_ONLY_FOR_TEST' => 'true', 'ARG_APPDIR' => @appdir)
+    out, status = Open3.capture2e(env, 'bash', 'src/install.sh', chdir: @tmpdir)
+    assert_predicate(status, :success?, out)
+    assert(File.exist?(File.join(@appdir, '.ssh', 'config')))
+  end
+
   it 'should render the user config from .ssh/config.erb' do
     assert(run_install.success?)
     config = File.read(app_path('.ssh', 'config'))

@@ -55,4 +55,10 @@ describe 'sample config' do
     assert_equal(remote_ports.uniq, remote_ports)
     assert_equal(local_ports.uniq, local_ports)
   end
+
+  it 'should not offer a way to disable host key verification' do
+    text = File.read(File.join(SAMPLE_SSH_DIR, 'config.erb'))
+    refute_match(/StrictHostKeyChecking\s+no/, text)
+    refute_match(%r{UserKnownHostsFile\s+/dev/null}, text)
+  end
 end

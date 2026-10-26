@@ -90,6 +90,7 @@ if [[ "$ARG_FILES_ONLY_FOR_TEST" == true ]]; then
   echo "TEST MODE: deploy files only, as the current user. Skip sudo, useradd, chown and systemd"
 fi
 
+# paths below are relative to the source directory
 cd "$(dirname "$0")"
 
 if [[ "$(realpath -m "$ARG_APPDIR")" == "$(pwd -P)" ]]; then
@@ -101,7 +102,7 @@ render_template() {
   local template_path="$1"
   local output_path="$2"
 
-  local cmd=(ruby "$(dirname "$0")/tools/render_erb.rb" "$template_path" "$output_path"
+  local cmd=(ruby tools/render_erb.rb "$template_path" "$output_path"
     "app_dir=$ARG_APPDIR" "ssh_dir=$ARG_APPDIR/.ssh" "ruby=$ARG_RUBY")
   if [[ "$USE_SERVICE_USER" == true ]]; then
     cmd+=("user=$ARG_USER" "group=$SERVICE_GROUP")
