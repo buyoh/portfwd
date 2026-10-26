@@ -1,6 +1,7 @@
 require 'minitest/autorun'
 require 'fileutils'
 require 'open3'
+require 'rbconfig'
 require 'tmpdir'
 
 REPO_ROOT = File.expand_path('..', __dir__)
@@ -29,17 +30,83 @@ describe 'install.sh' do
     File.write(File.join(@srcdir, path), content)
   end
 
-  def run_install(extra_env = {})
-    env = {
-      'ARG_USE_SUDO' => 'false',
-      'ARG_USE_ANOTHER_USER' => 'false',
+  # unset variables inherited from the developer's shell, which install.sh would reject or use
+  CLEARED_ENV = %w[
+    ARG_USE_SUDO ARG_USE_ANOTHER_USER ARG_UID ARG_USE_CURRENT_DIR ARG_INSTALL_SYSTEMD ARG_STARTUP_CHECK_SEC
+    ARG_USER ARG_USE_ROOT ARG_RUBY
+  ].to_h { |name| [name, nil] }.freeze
+
+  # a nil value in extra_env unsets the variable
+  def run_install_with_output(extra_env = {}, stdin: '')
+    env = CLEARED_ENV.merge(
       'ARG_ALWAYS_YES' => 'true',
-      'ARG_INSTALL_SYSTEMD' => 'false',
+      'ARG_FILES_ONLY_FOR_TEST' => 'true',
       'ARG_APPDIR' => @appdir
-    }.merge(extra_env)
+    ).merge(extra_env)
     # install.sh must be invoked by absolute path (see code review 08)
-    _out, status = Open3.capture2e(env, 'bash', File.join(@srcdir, 'install.sh'))
-    status
+    out, status = Open3.capture2e(env, 'bash', File.join(@srcdir, 'install.sh'), stdin_data: stdin)
+    [status, out]
+  end
+
+  def run_install(extra_env = {})
+    run_install_with_output(extra_env)[0]
+  end
+
+  # a sudo that runs the read-only check of install.sh (`sh -c`), and logs and fails anything else.
+  # check: :run runs the check, :fail fails it as when the authentication fails, :garbage prints an unexpected output
+  def install_fake_sudo(check: :run)
+    bindir = File.join(@tmpdir, 'bin')
+    FileUtils.mkdir_p(bindir)
+    path = File.join(bindir, 'sudo')
+    File.write(path, <<~SH)
+      #!/bin/sh
+      if [ "$1" = sh ]; then
+        # the script is multi-line
+        echo "$1 $2" >> "$FAKE_SUDO_CHECK_LOG"
+        case "$FAKE_SUDO_CHECK" in
+          fail) exit 1 ;;
+          garbage) echo garbage; exit 0 ;;
+        esac
+        exec "$@"
+      fi
+      echo "$*" >> "$FAKE_SUDO_LOG"
+      exit 1
+    SH
+    File.chmod(0o755, path)
+    @sudo_log = File.join(@tmpdir, 'sudo.log')
+    @sudo_check_log = File.join(@tmpdir, 'sudo_check.log')
+    { 'PATH' => "#{bindir}:#{ENV.fetch('PATH')}", 'FAKE_SUDO_LOG' => @sudo_log,
+      'FAKE_SUDO_CHECK_LOG' => @sudo_check_log, 'FAKE_SUDO_CHECK' => check.to_s }
+  end
+
+  def read_log(path)
+    File.exist?(path) ? File.readlines(path, chomp: true) : []
+  end
+
+  # calls other than the read-only check
+  def sudo_calls
+    read_log(@sudo_log)
+  end
+
+  def sudo_check_calls
+    read_log(@sudo_check_log)
+  end
+
+  # normal mode (no ARG_FILES_ONLY_FOR_TEST) with the fake sudo, and a runtime ruby that exists on any host
+  def normal_mode_env(check: :run)
+    install_fake_sudo(check: check).merge('ARG_FILES_ONLY_FOR_TEST' => nil, 'ARG_RUBY' => RbConfig.ruby)
+  end
+
+  def git(*args)
+    env = { 'GIT_CONFIG_GLOBAL' => '/dev/null', 'GIT_CONFIG_NOSYSTEM' => '1' }
+    out, status = Open3.capture2e(env, 'git', '-c', 'user.name=test', '-c', 'user.email=test@example.com',
+                                  '-C', @srcdir, *args)
+    assert(status.success?, out)
+    out
+  end
+
+  def git_available?
+    system('git', '--version', out: File::NULL, err: File::NULL)
   end
 
   def mode(path)
@@ -48,6 +115,13 @@ describe 'install.sh' do
 
   def app_path(*names)
     File.join(@appdir, *names)
+  end
+
+  def make_app_files(files)
+    files.each do |name, content|
+      FileUtils.mkdir_p(File.dirname(app_path(name)))
+      File.write(app_path(name), content)
+    end
   end
 
   it 'should render the user config from .ssh/config.erb' do
@@ -112,10 +186,13 @@ describe 'install.sh' do
   end
 
   it 'should fail before installing when the runtime ruby does not exist' do
-    status = run_install('ARG_INSTALL_SYSTEMD' => 'true', 'ARG_RUBY' => File.join(@tmpdir, 'no-ruby'))
+    env = install_fake_sudo.merge('ARG_FILES_ONLY_FOR_TEST' => nil, 'ARG_RUBY' => File.join(@tmpdir, 'no-ruby'))
+    status, out = run_install_with_output(env)
 
     assert(!status.success?)
+    assert_includes(out, 'is not an absolute path to an executable')
     assert(!File.exist?(@appdir))
+    assert_empty(sudo_calls)
   end
 
   it 'should clean up staging directories on failure' do
@@ -124,5 +201,227 @@ describe 'install.sh' do
     assert(!run_install.success?)
     assert(!File.exist?(app_path('.ssh.new')))
     assert(!File.exist?(app_path('.ssh')))
+  end
+
+  describe 'arguments' do
+    it 'should reject obsolete arguments with their replacement' do
+      {
+        'ARG_USE_SUDO' => 'sudo is used automatically',
+        'ARG_USE_ANOTHER_USER' => 'ARG_USE_ROOT=true',
+        'ARG_UID' => 'allocated automatically',
+        'ARG_USE_CURRENT_DIR' => 'Run lib/main.rb directly',
+        'ARG_INSTALL_SYSTEMD' => 'ARG_FILES_ONLY_FOR_TEST',
+        'ARG_STARTUP_CHECK_SEC' => 'waits 20s'
+      }.each do |name, replacement|
+        status, out = run_install_with_output({ name => 'false' })
+        assert(!status.success?, name)
+        assert_includes(out, "#{name} is no longer supported")
+        assert_includes(out, replacement)
+      end
+      assert(!File.exist?(@appdir))
+    end
+
+    it 'should reject obsolete arguments even with their old default values or empty' do
+      assert(!run_install('ARG_USE_SUDO' => 'true').success?)
+      assert(!run_install('ARG_INSTALL_SYSTEMD' => '').success?)
+      assert(!File.exist?(@appdir))
+    end
+
+    it 'should reject a relative ARG_APPDIR' do
+      assert(!run_install('ARG_APPDIR' => 'app').success?)
+      assert(!File.exist?(File.join(@srcdir, 'app')))
+    end
+
+    it 'should reject an invalid ARG_USER' do
+      ['-o root', "a\nb", 'a:b'].each do |user|
+        assert(!run_install('ARG_USER' => user).success?, user.inspect)
+      end
+    end
+
+    it 'should reject non-boolean values' do
+      status, out = run_install_with_output({ 'ARG_USE_ROOT' => 'yes' })
+      assert(!status.success?)
+      assert_includes(out, 'ARG_USE_ROOT')
+    end
+
+    it 'should reject ARG_USER with ARG_USE_ROOT=true' do
+      assert(!run_install('ARG_USE_ROOT' => 'true', 'ARG_USER' => 'foo').success?)
+      assert(!File.exist?(@appdir))
+    end
+
+    it 'should refuse to install into the source directory' do
+      assert(!run_install('ARG_APPDIR' => @srcdir).success?)
+      assert(File.exist?(File.join(@srcdir, '.ssh', 'config.erb')))
+      assert(File.exist?(File.join(@srcdir, 'lib', 'main.rb')))
+    end
+  end
+
+  describe 'test mode' do
+    it 'should not call sudo' do
+      status, out = run_install_with_output(install_fake_sudo)
+      assert(status.success?, out)
+      assert_includes(out, 'TEST MODE:')
+      assert_empty(sudo_calls)
+      assert_empty(sudo_check_calls)
+    end
+
+    it 'should ignore ARG_USE_ROOT' do
+      # answers only the first confirmation. A second one fails at EOF
+      status, out = run_install_with_output({ 'ARG_ALWAYS_YES' => nil, 'ARG_USE_ROOT' => 'true' }, stdin: "Y\n")
+      assert(status.success?, out)
+      refute_includes(out, 'will run as root')
+    end
+  end
+
+  describe 'normal mode' do
+    before do
+      skip 'requires a non-root user' if Process.euid.zero?
+    end
+
+    it 'should use sudo' do
+      status, out = run_install_with_output(normal_mode_env)
+      assert(!status.success?, out)
+      refute_includes(out, 'TEST MODE:')
+      assert_equal(['sh -c'], sudo_check_calls)
+      refute_empty(sudo_calls)
+      assert(!File.exist?(@appdir))
+    end
+
+    %i[fail garbage].each do |check|
+      it "should abort when the check of the destination results in #{check}" do
+        make_app_files('note.txt' => 'keep')
+        status, out = run_install_with_output(normal_mode_env(check: check))
+        assert(!status.success?, out)
+        assert_includes(out, 'Failed to check')
+        assert_equal(['sh -c'], sudo_check_calls)
+        # nothing that modifies the system
+        assert_empty(sudo_calls)
+        assert(!File.exist?(app_path('version')))
+      end
+    end
+
+    it 'should set the owner to the service user' do
+      env = normal_mode_env.merge('ARG_USER' => 'portfwd-test-nonexistent')
+      assert(!run_install(env).success?)
+      assert_match(/\Auseradd .*portfwd-test-nonexistent\z/, sudo_calls.first)
+    end
+
+    it 'should not set the owner with ARG_USE_ROOT=true' do
+      env = normal_mode_env.merge('ARG_USE_ROOT' => 'true')
+      assert(!run_install(env).success?)
+      assert_equal("install -d -m 755 #{@appdir}", sudo_calls.first)
+    end
+  end
+
+  describe 'version file' do
+    it 'should write unknown outside a git repository' do
+      assert(run_install.success?)
+      assert_equal("unknown\n", File.read(app_path('version')))
+      assert_equal(0o644, mode(app_path('version')))
+    end
+
+    it 'should write the commit hash and time' do
+      skip 'git is not available' unless git_available?
+      git('init', '-q')
+      git('add', '-A')
+      git('commit', '-q', '-m', 'test')
+
+      assert(run_install.success?)
+      hash, time = File.readlines(app_path('version'), chomp: true)
+      assert_equal(git('rev-parse', 'HEAD').strip, hash)
+      assert_match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}\z/, time)
+    end
+
+    it 'should write unknown in a repository without commits' do
+      skip 'git is not available' unless git_available?
+      git('init', '-q')
+
+      assert(run_install.success?)
+      assert_equal("unknown\n", File.read(app_path('version')))
+    end
+  end
+
+  describe 'install destination' do
+    it 'should install into an empty directory' do
+      FileUtils.mkdir_p(@appdir)
+      assert(run_install.success?)
+    end
+
+    it 'should refuse an unrelated directory' do
+      make_app_files('note.txt' => 'keep', '.ssh/id_rsa' => 'keep')
+      status, out = run_install_with_output
+      assert(!status.success?)
+      assert_includes(out, 'echo unknown | sudo tee')
+      assert_equal('keep', File.read(app_path('note.txt')))
+      assert_equal('keep', File.read(app_path('.ssh', 'id_rsa')))
+    end
+
+    it 'should refuse a version file in an unknown format' do
+      make_app_files('version' => "1.0\n")
+      assert(!run_install.success?)
+    end
+
+    it 'should refuse another working copy of portfwd' do
+      make_app_files('install.sh' => '', 'lib/main.rb' => '', '.ssh/config.rb' => '')
+      assert(!run_install.success?)
+    end
+
+    it 'should update an install made before the version file' do
+      make_app_files('lib/main.rb' => '', '.ssh/config.rb' => '')
+      assert(run_install.success?)
+      assert(File.exist?(app_path('version')))
+    end
+
+    it 'should update an install with portfwd.service made by old versions' do
+      make_app_files('portfwd.service' => '', '.ssh/config' => '')
+      assert(run_install.success?)
+      assert(!File.exist?(app_path('portfwd.service')))
+    end
+
+    it 'should resume from leftovers of an interrupted first install' do
+      make_app_files('.ssh.new/stale' => '')
+      assert(run_install.success?)
+      assert(!File.exist?(app_path('.ssh', 'stale')))
+      assert(!File.exist?(app_path('.ssh.new')))
+    end
+
+    it 'should resume a first install interrupted after a swap' do
+      make_app_files('version' => "unknown\n", '.ssh/config' => '')
+      assert(run_install.success?)
+      assert(File.exist?(app_path('lib', 'main.rb')))
+    end
+
+    it 'should refuse a directory with only .ssh.old' do
+      make_app_files('.ssh.old/id_rsa' => 'keep')
+      assert(!run_install.success?)
+      assert_equal('keep', File.read(app_path('.ssh.old', 'id_rsa')))
+    end
+
+    it 'should refuse a regular file' do
+      File.write(@appdir, '')
+      status, out = run_install_with_output
+      assert(!status.success?)
+      assert_includes(out, 'is not a directory')
+    end
+
+    it 'should refuse a symbolic link' do
+      target = File.join(@tmpdir, 'target')
+      FileUtils.mkdir_p(target)
+      File.symlink(target, @appdir)
+      assert(!run_install.success?)
+      assert(!run_install('ARG_APPDIR' => "#{@appdir}/").success?)
+      assert_empty(Dir.children(target))
+    end
+
+    it 'should accept a trailing slash' do
+      assert(run_install('ARG_APPDIR' => "#{@appdir}/").success?)
+      assert(File.exist?(app_path('version')))
+    end
+
+    it 'should not write into a version directory' do
+      make_app_files('version/keep' => '', 'lib/main.rb' => '', '.ssh/config.rb' => '')
+      assert(!run_install.success?)
+      assert_equal(['keep'], Dir.children(app_path('version')))
+    end
   end
 end

@@ -6,7 +6,7 @@
     resolved = File.exist?(path) ? File.realpath(path) : path
     [path, resolved].any? { |p| p.start_with?('/home/', '/root/', '/run/user/') }
   end
-  # root without capabilities cannot read files owned by the invoking user (ARG_USE_CURRENT_DIR mode)
+  # root without capabilities cannot traverse or read paths owned by another user under a home directory (ARG_APPDIR or ARG_RUBY)
   capabilities = user == 'root' && under_home ? 'CAP_DAC_READ_SEARCH' : ''
 -%>
 [Unit]
