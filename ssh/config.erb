@@ -9,6 +9,7 @@ Host portfwd
 
     # StrictHostKeyChecking no
     # UserKnownHostsFile /dev/null
+    # known_hosts is read-only for the service: register host keys in advance. accept-new does not save them
     StrictHostKeyChecking yes
     UserKnownHostsFile <%= ssh_dir %>/known_hosts
 

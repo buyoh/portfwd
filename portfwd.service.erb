@@ -22,6 +22,10 @@ Restart=always
 RestartSec=10
 ExecStart=<%= ruby %> <%= app_dir %>/lib/main.rb <%= ssh_dir %>
 
+# Constraints of the sandbox below:
+# - ssh_dir is read-only (ProtectSystem=strict). ssh cannot add host keys, even with StrictHostKeyChecking accept-new
+# - no capabilities, even as root: forwarding local ports below 1024 is not possible
+# - no setuid (NoNewPrivileges, RestrictSUIDSGID): HostbasedAuthentication (ssh-keysign) is not available
 NoNewPrivileges=yes
 CapabilityBoundingSet=<%= capabilities %>
 ProtectSystem=strict

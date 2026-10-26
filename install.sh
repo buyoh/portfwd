@@ -8,7 +8,9 @@ ARG_USE_ROOT=${ARG_USE_ROOT:-false}
 ARG_USER=${ARG_USER:-mai-portfwd}
 ARG_APPDIR=${ARG_APPDIR:-/opt/mai-portfwd}
 ARG_ALWAYS_YES=${ARG_ALWAYS_YES:-false}
-# ruby used by the service at runtime (not the one rendering templates during install)
+# ruby used by the service at runtime (not the one rendering templates during install).
+# It is checked with the invoker's privilege only; whether the service user can run it is found by the startup check.
+# Shims of rbenv or asdf do not work, since they depend on HOME and so on of the invoker
 ARG_RUBY=${ARG_RUBY:-/usr/bin/ruby}
 # for test only: deploy files with the invoker's privilege. Skip sudo, useradd, chown and systemd
 ARG_FILES_ONLY_FOR_TEST=${ARG_FILES_ONLY_FOR_TEST:-false}
