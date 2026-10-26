@@ -1,4 +1,4 @@
-require_relative 'node'
+require_relative '../../lib/node'
 
 # Evaluates config.rb and collects the nodes declared by `p_conn`.
 #
@@ -38,5 +38,8 @@ class ConfigDSL
     nodes
   rescue StandardError, ScriptError => e
     raise Error, "Failed to evaluate #{path}: #{e.class}: #{e.message}"
+  rescue SystemExit => e
+    # `exit` in config.rb must not end the caller as if it succeeded
+    raise Error, "Failed to evaluate #{path}: exit is called (status #{e.status})"
   end
 end

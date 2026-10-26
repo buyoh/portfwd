@@ -4,6 +4,8 @@ require 'open3'
 require 'rbconfig'
 require 'tmpdir'
 
+require_relative '../lib/node_config'
+
 REPO_ROOT = File.expand_path('..', __dir__)
 
 describe 'install.sh' do
@@ -136,7 +138,7 @@ describe 'install.sh' do
 
     assert_equal(0o755, mode(@appdir))
     assert_equal(0o700, mode(app_path('.ssh')))
-    %w[id_rsa config config.rb].each do |name|
+    %w[id_rsa config config.yml].each do |name|
       assert_equal(0o600, mode(app_path('.ssh', name)), name)
     end
     assert_equal(0o755, mode(app_path('lib')))
@@ -193,6 +195,86 @@ describe 'install.sh' do
     assert_includes(out, 'is not an absolute path to an executable')
     assert(!File.exist?(@appdir))
     assert_empty(sudo_calls)
+  end
+
+  describe 'config.yml' do
+    it 'should install config.yml generated from config.rb instead of config.rb' do
+      assert(run_install.success?)
+      assert(!File.exist?(app_path('.ssh', 'config.rb')))
+      assert_equal(%w[portfwd], NodeConfig.parse_file(app_path('.ssh', 'config.yml')).map(&:host))
+    end
+
+    it 'should not install config.yml in the working copy' do
+      write_src('.ssh/config.yml', "stale\n")
+      write_src('.ssh/config.rb', "p_conn(host: 'updated', check_tcps: [])\n")
+      assert(run_install.success?)
+      assert_equal(%w[updated], NodeConfig.parse_file(app_path('.ssh', 'config.yml')).map(&:host))
+    end
+
+    it 'should not leave the temporary file' do
+      tmpdir = File.join(@tmpdir, 'tmp')
+      FileUtils.mkdir_p(tmpdir)
+      assert(run_install('TMPDIR' => tmpdir).success?)
+      write_src('.ssh/config.rb', "p_conn(host: 'a'\n")
+      assert(!run_install('TMPDIR' => tmpdir).success?)
+      assert_empty(Dir.children(tmpdir))
+    end
+
+    it 'should fail without modifying the destination when config.rb is invalid' do
+      write_src('.ssh/config.rb', "p_conn(host: 'a', check_tcps: [], user: 'x')\n")
+      status, out = run_install_with_output
+      assert(!status.success?)
+      assert_includes(out, 'Failed to generate config.yml')
+      assert(!File.exist?(@appdir))
+
+      write_src('.ssh/config.rb', "p_conn(host: 'portfwd', check_tcps: [])\n")
+      assert(run_install.success?)
+      File.write(app_path('lib', 'marker.rb'), '')
+      write_src('.ssh/config.erb', "# UPDATED_MARKER\n")
+      write_src('.ssh/config.rb', "p_conn(host: 'portfwd'\n")
+      assert(!run_install.success?)
+      assert(File.exist?(app_path('lib', 'marker.rb')))
+      refute_includes(File.read(app_path('.ssh', 'config')), 'UPDATED_MARKER')
+      assert_equal(%w[portfwd], NodeConfig.parse_file(app_path('.ssh', 'config.yml')).map(&:host))
+    end
+
+    it 'should fail without config.rb' do
+      File.unlink(File.join(@srcdir, '.ssh', 'config.rb'))
+      status, out = run_install_with_output
+      assert(!status.success?)
+      assert_includes(out, "'.ssh/config.rb' not found")
+      assert(!File.exist?(@appdir))
+    end
+
+    it 'should evaluate config.rb without sudo before checking the destination' do
+      write_src('.ssh/config.rb', "p_conn(host: 'a'\n")
+      status, out = run_install_with_output(normal_mode_env)
+      assert(!status.success?)
+      assert_includes(out, 'Failed to generate config.yml')
+      assert_empty(sudo_calls)
+      assert_empty(sudo_check_calls)
+      assert(!File.exist?(@appdir))
+    end
+
+    it 'should fail when config.rb ends the generator successfully without output' do
+      write_src('.ssh/config.rb', "exit 0\n")
+      assert(!run_install.success?)
+      assert(!File.exist?(@appdir))
+    end
+
+    it 'should fail before installing when the runtime ruby cannot load yaml' do
+      fake_ruby = File.join(@tmpdir, 'ruby-without-yaml')
+      File.write(fake_ruby, "#!/bin/sh\nexit 1\n")
+      File.chmod(0o755, fake_ruby)
+      env = install_fake_sudo.merge('ARG_FILES_ONLY_FOR_TEST' => nil, 'ARG_RUBY' => fake_ruby)
+      status, out = run_install_with_output(env)
+
+      assert(!status.success?)
+      assert_includes(out, 'cannot load yaml')
+      assert(!File.exist?(@appdir))
+      assert_empty(sudo_calls)
+      assert_empty(sudo_check_calls)
+    end
   end
 
   it 'should clean up staging directories on failure' do

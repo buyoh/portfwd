@@ -130,7 +130,8 @@ if [[ "$USE_SERVICE_USER" == true ]]; then
   CODE_OWNER_OPTS=(-o root -g root)
 fi
 
-# install the regular files directly under .ssh (except templates and rendered files) into dest_dir
+# install the regular files directly under .ssh (except templates and generated files) into dest_dir.
+# config.rb is not installed: the service reads config.yml generated from it
 install_ssh_files() {
   local dest_dir="$1"
   local file
@@ -138,7 +139,7 @@ install_ssh_files() {
   for file in .ssh/*; do
     [[ -f "$file" ]] || continue
     case "$(basename "$file")" in
-      config.erb | config) continue ;;
+      config.erb | config | config.rb | config.yml) continue ;;
     esac
     $WRAP_SUDO install -m 600 "${SSH_OWNER_OPTS[@]}" "$file" "$dest_dir/"
   done
@@ -246,9 +247,33 @@ if [[ ! -f .ssh/config.erb ]]; then
   exit 1
 fi
 
+if [[ ! -f .ssh/config.rb ]]; then
+  echo "config file '.ssh/config.rb' not found"
+  echo "Copy 'ssh/config.rb' to '.ssh/config.rb' and edit it"
+  exit 1
+fi
+
 if [[ "$ARG_FILES_ONLY_FOR_TEST" != true && ( "$ARG_RUBY" != /* || ! -x "$ARG_RUBY" ) ]]; then
   echo "ruby '$ARG_RUBY' is not an absolute path to an executable"
   echo "Set ARG_RUBY to the ruby the service should run with"
+  exit 1
+fi
+# the service reads config.yml. libyaml may be packaged separately from ruby
+if [[ "$ARG_FILES_ONLY_FOR_TEST" != true ]] && ! "$ARG_RUBY" -ryaml -e '' > /dev/null 2>&1; then
+  echo "ruby '$ARG_RUBY' cannot load yaml. Install libyaml for it"
+  exit 1
+fi
+
+# evaluate config.rb with the invoker's privilege (no sudo) before modifying anything.
+# config.rb is not installed and is never evaluated by the service.
+# a private directory, so that other users cannot take the name of the tool's temporary file
+TMP_CONFIG_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_CONFIG_DIR"' EXIT
+TMP_CONFIG_YML=$TMP_CONFIG_DIR/config.yml
+# read back in another process, since config.rb can affect the tool's own process (e.g. `exit 0`)
+if ! ruby tools/generate_config.rb .ssh/config.rb "$TMP_CONFIG_YML" \
+  || ! ruby -r ./lib/node_config -e 'NodeConfig.parse_file(ARGV[0])' "$TMP_CONFIG_YML"; then
+  echo "Failed to generate config.yml from '.ssh/config.rb'"
   exit 1
 fi
 
@@ -282,6 +307,7 @@ on_exit() {
   if [[ -n "$TMP_VERSION_FILE" ]]; then
     rm -f "$TMP_VERSION_FILE"
   fi
+  rm -rf "$TMP_CONFIG_DIR"
   cleanup_staging
 }
 trap on_exit EXIT
@@ -298,6 +324,7 @@ $WRAP_SUDO rm -f "$ARG_APPDIR/portfwd.service"
 $WRAP_SUDO install -d -m 700 "${SSH_OWNER_OPTS[@]}" "$ARG_APPDIR/.ssh.new"
 install_ssh_files "$ARG_APPDIR/.ssh.new"
 render_ssh_config "$ARG_APPDIR/.ssh.new"
+$WRAP_SUDO install -T -m 600 "${SSH_OWNER_OPTS[@]}" "$TMP_CONFIG_YML" "$ARG_APPDIR/.ssh.new/config.yml"
 
 $WRAP_SUDO install -d -m 755 "${CODE_OWNER_OPTS[@]}" "$ARG_APPDIR/lib.new"
 $WRAP_SUDO install -m 644 "${CODE_OWNER_OPTS[@]}" lib/*.rb "$ARG_APPDIR/lib.new/"

@@ -1,7 +1,7 @@
 require 'minitest/autorun'
 require 'tmpdir'
 
-require_relative '../lib/config_dsl'
+require_relative '../tools/lib/config_dsl'
 
 describe 'ConfigDSL' do
   before do
@@ -80,6 +80,11 @@ describe 'ConfigDSL' do
 
   it 'should raise ConfigDSL::Error for a syntax error' do
     assert_raises(ConfigDSL::Error) { ConfigDSL.load_file(write_config("p_conn(host: 'host1'\n")) }
+  end
+
+  it 'should raise ConfigDSL::Error when config.rb calls exit' do
+    error = assert_raises(ConfigDSL::Error) { ConfigDSL.load_file(write_config("p_conn(host: 'host1')\nexit 0\n")) }
+    assert_includes(error.message, 'exit')
   end
 
   it 'should raise ConfigDSL::Error for an error while evaluating' do

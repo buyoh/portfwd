@@ -5,8 +5,14 @@ systemd service to create a remote forwarding connection from server to client
 ## How to use
 
 1. Copy `ssh` directory to `.ssh`
-2. Update `.ssh/config` and `.ssh/id_rsa`, and more.
+2. Update `.ssh/config.erb`, `.ssh/config.rb` and `.ssh/id_rsa`, and more.
 3. Run `install.sh`
+
+`.ssh/config.rb` declares the connections. `install.sh` evaluates it with the invoker's privilege and installs the generated `config.yml` instead of `config.rb`. The service reads only `config.yml` and never evaluates `config.rb`.
+
+After changing `config.rb`, rerun `install.sh` (or `tools/generate_config.rb` for the working copy). Do not edit the installed `config.yml` directly: it is a generated file.
+
+The host names in `config.rb` (`host` of `p_conn`) must match `[A-Za-z0-9][A-Za-z0-9_-]*`, and `p_conn` accepts only the keys `host` and `check_tcps`.
 
 ## Install options
 
@@ -53,5 +59,7 @@ echo unknown | sudo tee /opt/mai-portfwd/version
 Do not set `ARG_APPDIR` to the working copy. Run the service directly instead:
 
 ```sh
-ruby tools/render_erb.rb .ssh/config.erb .ssh/config "app_dir=$PWD" "ssh_dir=$PWD/.ssh" && ruby lib/main.rb .ssh
+ruby tools/render_erb.rb .ssh/config.erb .ssh/config "app_dir=$PWD" "ssh_dir=$PWD/.ssh" \
+  && ruby tools/generate_config.rb .ssh/config.rb .ssh/config.yml \
+  && ruby lib/main.rb .ssh
 ```
